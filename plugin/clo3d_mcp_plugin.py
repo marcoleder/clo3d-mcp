@@ -5,24 +5,59 @@ import time
 import threading
 
 try:
+    import clo_shim as _clo_shim_mod
+except Exception:            # never let the shim break the bridge
+    _clo_shim_mod = None
+
+
+def _shim():
+    """The C++ shim if it loaded AND CLO's API pointers are live, else None."""
+    if _clo_shim_mod is None:
+        return None
+    return _clo_shim_mod.load()
+
+
+_IMPORT_ERROR = None
+try:
     import export_api
     import fabric_api
     import import_api
     import pattern_api
     import utility_api
     IN_CLO3D = True
-except ImportError:
+except ImportError as _e:
     IN_CLO3D = False
+    _IMPORT_ERROR = str(_e)
     print("[CLO MCP] WARNING: Not running inside CLO3D. API calls will fail.")
 
 # Communication directory
-COMM_DIR = os.path.join(os.environ.get("TEMP", os.path.expanduser("~")), "clo3d_mcp")
+COMM_DIR = os.environ.get("CLO3D_MCP_DIR") or os.path.join(
+    os.environ.get("TEMP", os.path.expanduser("~")), "clo3d_mcp"
+)
 REQUEST_FILE = os.path.join(COMM_DIR, "request.json")
 RESPONSE_FILE = os.path.join(COMM_DIR, "response.json")
 POLL_INTERVAL = 0.1
 
+# When CLO runs this from the Plugins menu, print() goes nowhere visible.
+# Everything important is therefore also appended to a log file.
+LOG_FILE = os.path.join(COMM_DIR, "bridge.log")
+
+
+def log(msg):
+    """Append a timestamped line to bridge.log; never raise."""
+    line = time.strftime("%H:%M:%S ") + str(msg)
+    print("[CLO MCP] " + str(msg))
+    try:
+        os.makedirs(COMM_DIR, exist_ok=True)
+        with open(LOG_FILE, "a") as fh:
+            fh.write(line + "\n")
+    except Exception:
+        pass
+
+_CLO_MCP_BRIDGE = True      # marker so a launcher can find prior instances
 _server_running = False
 _server_thread = None
+_deadline = None
 
 
 # ---------------------------------------------------------------------------
@@ -34,6 +69,203 @@ def handle_ping(params):
 
 
 # -- Scene --
+
+def handle_debug_shim(params):
+    """Report whether the C++ shim loaded and can see CLO's API pointers."""
+    if _clo_shim_mod is None:
+        return {"available": False, "reason": "clo_shim.py not importable"}
+    st = _clo_shim_mod.status()
+    st["active"] = _shim() is not None
+    return st
+
+
+def handle_debug_modules(params):
+    """Exhaustive hunt for the option types + full module dumps.
+
+    Earlier introspection checked only five modules and reported no classes,
+    but libCloScene.dylib contains "ImportExportOption" followed by every one
+    of its field names - the signature of a pybind11 class registration with
+    def_readwrite. So it is registered somewhere. This looks everywhere.
+    """
+    import importlib
+
+    found, dumps = [], {}
+    names = ["export_api", "fabric_api", "import_api", "pattern_api",
+             "utility_api", "rest_api"]
+    for n in names:
+        try:
+            m = importlib.import_module(n)
+        except Exception as e:
+            dumps[n] = "IMPORT FAILED: %r" % (e,)
+            continue
+        attrs = sorted(a for a in dir(m) if not a.startswith("_"))
+        types_ = []
+        for a in attrs:
+            try:
+                v = getattr(m, a)
+            except Exception:
+                continue
+            if isinstance(v, type):
+                types_.append(a)
+            if "option" in a.lower() or "Option" in a:
+                found.append("%s.%s" % (n, a))
+        dumps[n] = {"count": len(attrs), "types": types_, "all": attrs}
+
+    # candidate module names the types might live in
+    tried = {}
+    for cand in ["CloApiData", "clo_api", "cloapi", "marvelous", "Marvelous",
+                 "mv", "mv_api", "clo", "clo3d", "api", "common_api",
+                 "avatar_api", "trim_api", "vmodule"]:
+        try:
+            m = importlib.import_module(cand)
+            tried[cand] = sorted(a for a in dir(m) if not a.startswith("_"))[:40]
+        except Exception as e:
+            tried[cand] = "no: %s" % type(e).__name__
+
+    return {"option_like_found": found, "modules": dumps,
+            "candidate_imports": tried}
+
+
+# commands that only read state — never worth a repaint
+_READ_ONLY = {
+    "ping", "get_project_info", "get_garment_info", "get_pattern_count",
+    "get_pattern_list", "get_pattern_info", "get_pattern_bounding_box",
+    "get_arrangement_list", "get_fabric_list", "get_fabric_count",
+    "get_fabric_for_pattern", "get_colorways", "get_avatars",
+    "get_avatar_genders", "refresh_view", "set_live_preview",
+    "debug_api", "debug_sig", "debug_modules", "debug_shim",
+}
+
+_LIVE_PREVIEW = {"enabled": False, "path": None}
+
+
+def _snapshot_path():
+    if not _LIVE_PREVIEW["path"]:
+        import tempfile
+        _LIVE_PREVIEW["path"] = os.path.join(
+            tempfile.gettempdir(), "clo3d_live_preview.png")
+    return _LIVE_PREVIEW["path"]
+
+
+def _force_repaint():
+    """Force the 3D viewport to actually redraw on screen.
+
+    Measured on CLO 2026.1.224 with the bridge blocking the main thread:
+
+      utility_api.Refresh3DWindow()   -> NO repaint. It posts an event, and a
+                                         blocked event loop never handles it.
+      export_api.ExportThumbnail3D()  -> NO repaint. Renders offscreen.
+      export_api.ExportSnapshot3D()   -> REPAINTS. It captures the real
+                                         viewport, so the viewport is drawn.
+
+    So the only way to see progress live is to take a snapshot. It costs a
+    render plus a ~1 MB PNG write (~0.3-0.5s), which is why it is opt-in.
+    """
+    utility_api.Refresh3DWindow()          # harmless; helps once unblocked
+    try:
+        export_api.ExportSnapshot3D(_snapshot_path())
+        return True
+    except Exception:
+        return False
+
+
+def handle_refresh_view(params):
+    """Force the 3D viewport to redraw on screen.
+
+    Refresh3DWindow alone does nothing while the bridge blocks CLO, so this
+    also takes a snapshot, which does force a real repaint.
+    """
+    painted = _force_repaint()
+    return {"refreshed": True, "repainted": painted,
+            "snapshot": _snapshot_path() if painted else None}
+
+
+def handle_set_live_preview(params):
+    """Turn live preview on or off.
+
+    When on, the bridge repaints the viewport after every state-changing
+    command, so you can watch a batch happen instead of waiting for the end.
+    Costs ~0.3-0.5s and a ~1 MB PNG per command.
+    """
+    _LIVE_PREVIEW["enabled"] = bool(params.get("enabled", True))
+    if params.get("path"):
+        _LIVE_PREVIEW["path"] = params["path"]
+    return {"live_preview": _LIVE_PREVIEW["enabled"],
+            "snapshot_path": _snapshot_path()}
+
+
+def handle_debug_sig(params):
+    """Return pybind11's full overload list for the given functions.
+
+    Calling a pybind11 function with wrong args raises a TypeError whose text
+    enumerates every signature it actually accepts. That is the ground truth
+    for the Python binding, which need not match the C++ headers.
+    """
+    names = params.get("names") or [
+        "ExportGLB", "ExportGLTF", "ExportFBX", "ExportTechPack",
+        "ExportOBJ", "ExportThumbnail3D",
+    ]
+    out = {}
+    for n in names:
+        fn = getattr(export_api, n, None)
+        if fn is None:
+            out[n] = "NOT PRESENT on export_api"
+            continue
+        try:
+            fn("__sig_probe__", "__sig_probe__", "__sig_probe__", "__sig_probe__")
+            out[n] = "unexpectedly accepted 4 junk args"
+        except TypeError as e:
+            out[n] = str(e)
+        except Exception as e:
+            out[n] = type(e).__name__ + ": " + str(e)
+    out["_export_api_dir"] = sorted(
+        a for a in dir(export_api) if not a.startswith("_")
+    )
+    return out
+
+
+def handle_debug_api(params):
+    """Introspect the live CLO Python modules.
+
+    Diagnostic only; deliberately not exposed as an MCP tool. Exists because
+    the option structs (ImportExportOption / ExportTechpackOption) are required
+    by ExportFBX/GLB/GLTF/TechPack but are not attributes of export_api, and
+    static analysis of the SDK headers cannot reveal their bound Python name.
+    """
+    mods = {
+        "export_api": export_api, "fabric_api": fabric_api,
+        "import_api": import_api, "pattern_api": pattern_api,
+        "utility_api": utility_api,
+    }
+    out = {}
+    for name, m in mods.items():
+        attrs = [a for a in dir(m) if not a.startswith("_")]
+        classes, option_like = [], []
+        for a in attrs:
+            try:
+                v = getattr(m, a)
+            except Exception:
+                continue
+            if isinstance(v, type):
+                classes.append(a)
+            if "option" in a.lower():
+                option_like.append(a)
+        out[name] = {"total": len(attrs), "classes": classes,
+                     "option_like": option_like}
+    # also look for the types anywhere reachable
+    found = []
+    for modname, m in list(sys.modules.items()):
+        if m is None:
+            continue
+        for want in ("ImportExportOption", "ExportTechpackOption"):
+            if hasattr(m, want):
+                found.append(modname + "." + want)
+    out["_found_elsewhere"] = found
+    out["_sys_modules_sample"] = sorted(
+        n for n in sys.modules if "api" in n.lower() or "clo" in n.lower()
+    )[:25]
+    return out
+
 
 def handle_get_project_info(params):
     name = utility_api.GetProjectName()
@@ -150,7 +382,11 @@ def handle_create_pattern(params):
     for p in points:
         x, y = p[0], p[1]
         vtype = p[2] if len(p) > 2 else 0
-        point_tuples.append((x, y, vtype))
+        # CreatePatternWithPoints takes vector<tuple<float, float, int>>.
+        # pybind11 invokes NESTED type casters with convert=False, so a Python
+        # int in the x/y slots is rejected outright ("incompatible function
+        # arguments") rather than promoted. Coerce explicitly.
+        point_tuples.append((float(x), float(y), int(vtype)))
     result = pattern_api.CreatePatternWithPoints(point_tuples)
     return {"created": True, "point_count": len(point_tuples), "result": result}
 
@@ -211,6 +447,15 @@ def handle_get_fabric_for_pattern(params):
     return {"pattern_index": pattern_index, "fabric_index": fabric_index}
 
 
+def handle_replace_fabric(params):
+    # fabric_api.ReplaceFabric(fabricIndex, inputFilePath) -> bool
+    fabric_index = params["fabric_index"]
+    file_path = params["file_path"]
+    result = fabric_api.ReplaceFabric(fabric_index, file_path)
+    return {"replaced": bool(result), "fabric_index": fabric_index,
+            "file_path": file_path}
+
+
 def handle_delete_fabric(params):
     fabric_index = params["fabric_index"]
     result = fabric_api.DeleteFabric(fabric_index)
@@ -219,11 +464,73 @@ def handle_delete_fabric(params):
 
 # -- Export --
 
+# CLO 2026.1.224 registers NO Python classes in any of its api modules
+# (verified: dir() yields zero types in export/fabric/import/pattern/utility_api).
+# pybind11 therefore reports the option parameters by their raw C++ name,
+# "Marvelous::ImportExportOption", which is how it renders an UNREGISTERED type:
+#
+#   ExportGLB(): incompatible function arguments. The following argument
+#   types are supported:
+#       1. (arg0: str, arg1: Marvelous::ImportExportOption) -> List[str]
+#
+# There is no Python expression that can produce such a value, and ExportFBX /
+# ExportGLB / ExportGLTF / ExportTechPack have no option-free overload. These
+# four exports are therefore unreachable from CLO's Python at all. Only a C++
+# plug-in, which can construct Marvelous::ImportExportOption directly, can call
+# them. ExportOBJ is unaffected: it has an ExportOBJ(filePath) overload.
+_NO_OPTION_TYPE = (
+    "CLO {ver} does not expose Marvelous::{typ} to Python (it registers no "
+    "classes at all), and {fn} has no option-free overload, so this export "
+    "cannot be performed from the Python bridge. Use export_obj, or the "
+    "dialog-based variant if one exists, or drive {fn} from a C++ plug-in."
+)
+
+
+def _clo_version():
+    try:
+        return "%s.%s.%s" % (utility_api.GetMajorVersion(),
+                             utility_api.GetMinorVersion(),
+                             utility_api.GetPatchVersion())
+    except Exception:
+        return "2026.1"
+
+
+def _unsupported(fn, typ="ImportExportOption"):
+    return RuntimeError(_NO_OPTION_TYPE.format(ver=_clo_version(), typ=typ, fn=fn))
+
+
+def _build_export_option(options):
+    """Return an ImportExportOption, or raise a clear error if impossible.
+
+    Kept as a hook: if a future CLO registers the type, this starts working
+    with no other change.
+    """
+    ctor = getattr(export_api, "ImportExportOption", None) or getattr(
+        export_api, "NewImportExportOption", None)
+    if ctor is None:
+        raise _unsupported("ExportOBJ/FBX/GLB/GLTF")
+    opt = ctor()
+    for key, val in (options or {}).items():
+        if hasattr(opt, key):
+            setattr(opt, key, val)
+    return opt
+
+
 def handle_export_obj(params):
     file_path = params["file_path"]
     options = params.get("options", {})
+    sh = _shim() if options else None
+    if sh:
+        paths, rejected = sh.export_obj(file_path, options)
+        return {"exported": bool(paths), "file_paths": paths, "format": "obj",
+                "via": "clo_shim", "rejected_options": rejected}
     if options:
-        opt = export_api.NewImportExportOption()
+        # CLO 2026.1: ImportExportOption is a plain constructible struct.
+        # Older builds exposed a NewImportExportOption() factory.
+        if hasattr(export_api, "ImportExportOption"):
+            opt = export_api.ImportExportOption()
+        else:
+            opt = export_api.NewImportExportOption()
         for key, val in options.items():
             if hasattr(opt, key):
                 setattr(opt, key, val)
@@ -242,31 +549,52 @@ def handle_export_obj(params):
 
 def handle_export_fbx(params):
     file_path = params["file_path"]
-    try:
-        options = export_api.ImportExportOption()
-        result = export_api.ExportFBX(file_path, options)
-    except (AttributeError, TypeError):
-        result = export_api.ExportFBX(file_path)
+    sh = _shim()
+    if sh:
+        paths, rejected = sh.export_fbx(file_path, params.get("options"))
+        return {"exported": bool(paths), "file_paths": paths, "format": "fbx",
+                "via": "clo_shim", "rejected_options": rejected}
+    if not hasattr(export_api, "ImportExportOption"):
+        # every ExportFBX overload takes ImportExportOption, and unlike GLB/GLTF
+        # there is no ...WithDialog variant to fall back to
+        raise _unsupported("ExportFBX")
+    result = export_api.ExportFBX(file_path, _build_export_option(params.get("options")))
     return {"exported": bool(result), "file_path": result or file_path, "format": "fbx"}
 
 
 def handle_export_glb(params):
     file_path = params["file_path"]
-    try:
-        options = export_api.ImportExportOption()
-        result = export_api.ExportGLB(file_path, options)
-    except (AttributeError, TypeError):
-        result = export_api.ExportGLB(file_path)
+    sh = _shim()
+    if sh:
+        paths, rejected = sh.export_glb(file_path, params.get("options"))
+        return {"exported": bool(paths), "file_paths": paths, "format": "glb",
+                "via": "clo_shim", "rejected_options": rejected}
+    if hasattr(export_api, "ImportExportOption"):
+        result = export_api.ExportGLB(file_path, _build_export_option(params.get("options")))
+    elif hasattr(export_api, "ExportGLBWithDialog"):
+        # opens CLO's export dialog; needs a human click but is the only
+        # route available while the option type is unregistered
+        result = export_api.ExportGLBWithDialog(file_path)
+    else:
+        raise _unsupported("ExportGLB")
     return {"exported": bool(result), "file_path": result or file_path, "format": "glb"}
 
 
 def handle_export_gltf(params):
     file_path = params["file_path"]
-    try:
-        options = export_api.ImportExportOption()
-        result = export_api.ExportGLTF(file_path, options, False)
-    except (AttributeError, TypeError):
-        result = export_api.ExportGLTF(file_path)
+    sh = _shim()
+    if sh:
+        paths, rejected = sh.export_gltf(file_path, params.get("options"), binary=False)
+        return {"exported": bool(paths), "file_paths": paths, "format": "gltf",
+                "via": "clo_shim", "rejected_options": rejected}
+    if hasattr(export_api, "ImportExportOption"):
+        result = export_api.ExportGLTF(
+            file_path, _build_export_option(params.get("options")), False
+        )
+    elif hasattr(export_api, "ExportGLTFWithDialog"):
+        result = export_api.ExportGLTFWithDialog(file_path, False)
+    else:
+        raise _unsupported("ExportGLTF")
     return {"exported": bool(result), "file_path": result or file_path, "format": "gltf"}
 
 
@@ -294,12 +622,21 @@ def handle_export_turntable(params):
 
 def handle_export_tech_pack(params):
     file_path = params["file_path"]
-    try:
-        options = export_api.ExportTechpackOption()
-        result = export_api.ExportTechPack(file_path, options)
-    except (AttributeError, TypeError):
-        result = export_api.ExportTechPack(file_path)
-    return {"exported": bool(result), "file_path": result or file_path}
+    # CLO 2026.1: ExportTechPack(filePath, ExportTechpackOption) returns void,
+    # so success is "no exception raised" — bool(result) would always be False.
+    sh = _shim()
+    if sh:
+        rejected = sh.export_techpack(file_path, params.get("options"))
+        return {"exported": True, "file_path": file_path,
+                "via": "clo_shim", "rejected_options": rejected}
+    if not hasattr(export_api, "ExportTechpackOption"):
+        # ExportTechPack(str, ExportTechpackOption) is the only overload.
+        # ExportTechPackToStream(str) exists and needs no option type, but it
+        # returns the pack as a stream rather than writing file_path, so it is
+        # not a drop-in substitute — surface the limitation instead.
+        raise _unsupported("ExportTechPack", typ="ExportTechpackOption")
+    export_api.ExportTechPack(file_path, export_api.ExportTechpackOption())
+    return {"exported": True, "file_path": file_path}
 
 
 # -- Import --
@@ -332,9 +669,13 @@ def handle_simulate(params):
 
 
 def handle_set_simulation_quality(params):
+    # CLO 2026.1: SetSimulationQuality(quality, simulationMode) — both required.
+    # quality: 0=Normal 1=Animation(Stable) 2=Fitting(Accurate) 3=FAST(GPU)
+    # simulationMode: 0=CPU 1=FAST(GPU)
     quality = params["quality"]
-    utility_api.SetSimulationQuality(quality)
-    return {"quality": quality}
+    simulation_mode = params.get("simulation_mode", 0)
+    utility_api.SetSimulationQuality(quality, simulation_mode)
+    return {"quality": quality, "simulation_mode": simulation_mode}
 
 
 # -- Colorway --
@@ -367,9 +708,13 @@ def handle_set_colorway_name(params):
 
 
 def handle_copy_colorway(params):
+    # CLO 2026.1: CopyColorway(index, copyOption) -> index of the new colorway.
+    # copyOption: 0=unlink all properties 1=unlink materials only 2=link all
     index = params["colorway_index"]
-    utility_api.CopyColorway(index)
-    return {"copied": True, "source_index": index}
+    copy_option = params.get("copy_option", 0)
+    new_index = utility_api.CopyColorway(index, copy_option)
+    return {"copied": True, "source_index": index,
+            "copy_option": copy_option, "new_index": new_index}
 
 
 def handle_delete_colorway(params):
@@ -411,6 +756,12 @@ def handle_get_avatar_genders(params):
 
 HANDLERS = {
     "ping": handle_ping,
+    "debug_api": handle_debug_api,
+    "debug_sig": handle_debug_sig,
+    "debug_modules": handle_debug_modules,
+    "debug_shim": handle_debug_shim,
+    "refresh_view": handle_refresh_view,
+    "set_live_preview": handle_set_live_preview,
     "get_project_info": handle_get_project_info,
     "new_project": handle_new_project,
     "open_file": handle_open_file,
@@ -432,6 +783,7 @@ HANDLERS = {
     "assign_fabric": handle_assign_fabric,
     "set_fabric_color": handle_set_fabric_color,
     "get_fabric_for_pattern": handle_get_fabric_for_pattern,
+    "replace_fabric": handle_replace_fabric,
     "delete_fabric": handle_delete_fabric,
     "export_obj": handle_export_obj,
     "export_fbx": handle_export_fbx,
@@ -482,6 +834,13 @@ def process_command(data):
 
     try:
         result = handler(params)
+        # With live preview on, force the viewport to redraw after anything
+        # that changed state, so a batch can be watched as it happens.
+        if _LIVE_PREVIEW["enabled"] and cmd_type not in _READ_ONLY:
+            try:
+                _force_repaint()
+            except Exception:
+                pass          # a preview failure must never fail the command
         return json.dumps({"id": req_id, "status": "success", "result": result})
     except Exception as e:
         return json.dumps({
@@ -507,9 +866,26 @@ def poll_loop():
             except OSError:
                 pass
 
-    print("[CLO MCP] Listening for commands in: " + COMM_DIR)
+    log("poll_loop listening in " + COMM_DIR)
+
+    stop_file = os.path.join(COMM_DIR, "stop")
+    if os.path.exists(stop_file):
+        try:
+            os.remove(stop_file)
+        except OSError:
+            pass
 
     while _server_running:
+        if _deadline is not None and time.time() >= _deadline:
+            log("deadline reached; stopping")
+            break
+        if os.path.exists(stop_file):
+            log("stop file seen; releasing CLO")
+            try:
+                os.remove(stop_file)
+            except OSError:
+                pass
+            break
         try:
             if os.path.exists(REQUEST_FILE):
                 # Read request
@@ -541,7 +917,7 @@ def poll_loop():
 
         time.sleep(POLL_INTERVAL)
 
-    print("[CLO MCP] Server stopped")
+    log("poll_loop stopped")
 
 
 # ---------------------------------------------------------------------------
@@ -553,13 +929,13 @@ def start():
     global _server_running, _server_thread
 
     if _server_running:
-        print("[CLO MCP] Already running")
+        log("already running")
         return
 
     _server_running = True
     _server_thread = threading.Thread(target=poll_loop, daemon=True)
     _server_thread.start()
-    print("[CLO MCP] Plugin started")
+    log("bridge started")
 
 
 def stop():
@@ -577,6 +953,48 @@ def stop():
     print("[CLO MCP] Plugin stopped")
 
 
-# Auto-start
-if __name__ == "__main__" or IN_CLO3D:
-    start()
+def run_blocking(duration_seconds=600):
+    """Run the poll loop on the CALLING thread for a bounded time.
+
+    CLO's embedded Python does not schedule background threads: once a plug-in
+    script returns, the interpreter is not re-entered, so a daemon thread never
+    gets the GIL and silently stops serving requests.
+
+    This runs the loop inline instead. CLO's UI is unresponsive for the
+    duration, which is acceptable for an automated batch, and the loop always
+    returns after `duration_seconds` so CLO cannot be wedged permanently.
+    """
+    global _server_running, _deadline
+    _deadline = time.time() + duration_seconds
+    _server_running = True
+    log("run_blocking for %ss (UI will be unresponsive)" % duration_seconds)
+    try:
+        poll_loop()
+    finally:
+        _server_running = False
+        _deadline = None
+        log("run_blocking finished")
+
+
+# Auto-start.
+# Executing this file is always an explicit request to start the bridge, so do
+# not gate it on __name__ or IN_CLO3D: when CLO runs a plug-in from the Plugins
+# menu, __name__ is not "__main__", and gating on it silently did nothing.
+# Imported by a launcher (e.g. start_bridge_blocking.py) -> do not auto-start;
+# the launcher decides which mode to run. Executed by CLO as a plug-in script
+# (__name__ == "__main__") -> start.
+_IMPORTED_AS_MODULE = __name__ == "clo3d_mcp_plugin"
+
+log("--- script executed: __name__=%r IN_CLO3D=%s ---" % (__name__, IN_CLO3D))
+if _IMPORT_ERROR:
+    log("CLO API import failed: " + _IMPORT_ERROR)
+if _IMPORTED_AS_MODULE:
+    log("imported as a module; launcher chooses the run mode")
+else:
+    try:
+        start()
+        log("start() returned; thread alive=%s" % (
+            _server_thread.is_alive() if _server_thread else None))
+    except Exception as _exc:
+        log("start() raised: %r" % (_exc,))
+        raise

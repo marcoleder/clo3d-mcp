@@ -1,61 +1,24 @@
-# Ignore CMake generated files
-CMakeFiles/
-CMakeCache.txt
-cmake_install.cmake
-Makefile
-
-# Ignore build directories
-/build/
-/bin/
-/dist/
-
-# Ignore compiled object files
-*.o
-*.obj
-
-# Ignore compiled dynamic libraries
-*.so
+# build output
+cpp/build/
+cpp/build*/
 *.dylib
+*.so
 *.dll
 
-# Ignore compiled static libraries
-*.lib
-*.a
-
-# Ignore executable files
-*.exe
-*.out
-
-# Ignore IDE and editor files
-*.swp
-*.swo
-*.user
-*.ncb
-*.sdf
-*.suo
-*.vcxproj*
-*.vcproj*
-*.idea/
-*.vscode/
-
-# Ignore logs and temporary files
-*.log
-*.tmp
-
-# Ignore other system-specific files
-*.DS_Store
-
-# Python
-__pycache__/
-*.py[cod]
-*.egg-info/
-*.egg
-dist/
-*.whl
+# python
 .venv/
-venv/
+__pycache__/
+*.pyc
+*.bak
+*.bak[0-9]
 
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
+# test fixtures — garments are large binaries, keep them out of git
+*.zprj
+*.zpac
+*.zfab
+
+# local runtime
+*.log
+
+# macOS
+.DS_Store
