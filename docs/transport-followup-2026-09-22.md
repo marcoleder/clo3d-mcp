@@ -54,3 +54,22 @@ Evidence is preserved outside Git in
 `transport-watcher.log` and `transport-run/` (JSON results, original backup,
 test garment and 170 output files). Disk faults and clock drift were injected
 offline; actual WSL/Windows behavior remains untested.
+
+## Acceptance after the user restarted both sides
+
+Rechecked `16872a2` in a fresh protocol-3 session. All 48 tools were available
+directly in Codex; native MCP ping, project, pattern and avatar reads succeeded.
+Four independent stdio MCP clients completed 16 concurrent reads with results
+matching the baseline. Closing these clients left the shared bridge running.
+
+The full suite again passed **48/48 tools, 52 calls, zero failures**. Four
+turntable PNGs were 512×512 with distinct hashes. During final restoration,
+macOS denied the UI helper accessibility access; the user confirmed the Open
+Project dialog. The original pending call then completed after 98 seconds,
+without a retry. Project path and baseline scene-state checks passed. The bridge
+and watcher stopped; request/response directories were empty and no scene-review
+block remained.
+
+This run's evidence is under `restart-validation/` in the same external evidence
+directory: `concurrency.json`, `suite.log`, `summary.json`, and `run/` containing
+the scene backup and output artifacts. No implementation change was needed.
