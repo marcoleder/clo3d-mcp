@@ -2,7 +2,8 @@
 
 Gives the Python bridge access to the CLO exports that CLO's own Python
 bindings cannot reach — ExportFBX / ExportGLB / ExportGLTF / ExportTechPack,
-and export *options* for all of them. See cpp/clo_shim.cpp for why.
+export *options* for all of them, and AVT import in add mode (ABI 2).
+See cpp/clo_shim.cpp for why.
 
 Import is always safe: if the library is missing or not loadable, `load()`
 returns None and callers fall back to whatever Python can still do.
@@ -18,11 +19,11 @@ _shim = None          # cached CloShim, or False once a load has failed
 def _lib_names():
     """Library filename per platform, most likely first."""
     if sys.platform == "darwin":
-        return ["libclo_shim.dylib"]
+        return ["libclo_shim_v2.dylib", "libclo_shim.dylib"]
     if sys.platform.startswith("win"):
-        # MSVC emits clo_shim.dll; MinGW may prefix with lib
-        return ["clo_shim.dll", "libclo_shim.dll"]
-    return ["libclo_shim.so"]
+        # MSVC emits clo_shim_v2.dll; MinGW may prefix with lib
+        return ["clo_shim_v2.dll", "libclo_shim_v2.dll", "clo_shim.dll", "libclo_shim.dll"]
+    return ["libclo_shim_v2.so", "libclo_shim.so"]
 
 
 def _candidate_paths():
@@ -83,6 +84,9 @@ class CloShim(object):
         L.clo_export_gltf.restype = ctypes.c_int
         L.clo_export_techpack.argtypes = [ctypes.c_char_p, ctypes.c_void_p]
         L.clo_export_techpack.restype = ctypes.c_int
+        if hasattr(L, "clo_import_avatar"):
+            L.clo_import_avatar.argtypes = [ctypes.c_char_p]
+            L.clo_import_avatar.restype = ctypes.c_int
 
     # ------------------------------------------------------------------ state
 
@@ -164,6 +168,14 @@ class CloShim(object):
     def export_gltf(self, file_path, options=None, binary=False):
         return self._export(self.lib.clo_export_gltf, file_path, options,
                             extra=(1 if binary else 0,))
+
+    def import_avatar(self, file_path):
+        if not hasattr(self.lib, "clo_import_avatar"):
+            raise RuntimeError("AVT import requires shim ABI 2; rebuild cpp/ and restart the bridge")
+        result = self.lib.clo_import_avatar(file_path.encode("utf-8"))
+        if result < 0:
+            raise RuntimeError("clo_shim: native avatar import failed (%s)" % result)
+        return bool(result)
 
     def export_techpack(self, file_path, options=None):
         h = self.lib.clo_tp_opts_create()

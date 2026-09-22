@@ -48,6 +48,8 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
     CXX_EXTENSIONS OFF
     # no "lib" prefix games: keep the name stable for ctypes
     PREFIX "lib"
+    # Versioned filename avoids reusing a loaded ABI-1 image after an upgrade.
+    OUTPUT_NAME "clo_shim_v2"
 )
 
 if(APPLE)
@@ -57,7 +59,7 @@ elseif(MSVC)
     set_target_properties(${PROJECT_NAME} PROPERTIES
         WINDOWS_EXPORT_ALL_SYMBOLS ON
         MSVC_RUNTIME_LIBRARY "MultiThreadedDLL"   # must match CLO
-        PREFIX ""                                  # -> clo_shim.dll
+        PREFIX ""                                  # -> clo_shim_v2.dll
     )
 endif()
 

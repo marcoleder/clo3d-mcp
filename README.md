@@ -11,11 +11,12 @@ Your AI assistant  <-->  MCP Server  <-->  CLO3D Plugin  <-->  CLO3D
 > The bug fixes are offered upstream in [PR #2](https://github.com/Ubani-Studio/clo3d-mcp/pull/2);
 > the rest lives here. See [what this fork changes](#what-this-fork-changes).
 
-**Verification status (2026-09-22):** offline-tested fixes address the transport,
-handler, verification and build issues found in the [correctness audit](docs/correctness-audit-2026-09-22.md).
-Turntable export remains dependent on CLO's API producing images; an empty
-result is now an explicit error. Live CLO verification of these changes is pending; Windows runtime behavior is
-also untested.
+**Verification status (2026-09-22):** all **48 tools** passed the live suite on
+CLO 2026.1.224 / macOS arm64: **52 calls, zero failures**, including avatar import
+and turntable images. The offline suite has **42 passing tests**. See the
+[live validation report](docs/live-validation-2026-09-22.md) for artifacts,
+concurrent-client checks and limits, and the [original audit](docs/correctness-audit-2026-09-22.md)
+for the problems that prompted these fixes. Windows remains untested.
 
 ---
 
@@ -202,7 +203,7 @@ stop-file command above is also available when the MCP client has exited.
 **Colorways** — `get_colorways` `set_current_colorway` `set_colorway_name`
 `copy_colorway` `delete_colorway`
 
-**Avatars** — `get_avatars` `get_avatar_genders` `show_hide_avatar` `import_avatar`
+**Avatars** — `get_avatars` `get_avatar_genders` `show_hide_avatar` `import_avatar`\*
 
 **Simulation** — `simulate` `set_simulation_quality`
 
@@ -213,8 +214,9 @@ stop-file command above is also available when the MCP client has exited.
 
 **Session** — `ping` `refresh_view` `set_live_preview` `stop_bridge`
 
-\* needs the [native shim](#optional-native-shim). Export *options* on any
-export also need it.
+\* AVT import needs native shim ABI 2. FBX/tech pack and export options need the
+[native shim](#optional-native-shim) on the tested CLO build. GLB/glTF have dialog
+fallbacks only when no options are supplied.
 
 </details>
 
@@ -236,8 +238,9 @@ Costs ~0.3s and a ~1 MB PNG per change, so leave it off for long batches.
 
 The observed CLO 2026.1.224 Python bindings cannot construct the option types
 needed for FBX, GLB, glTF and tech pack exports. The native shim constructs those
-C++ types and provides the calls, including OBJ export with options. Unknown
-options fail before export.
+C++ types and provides the calls, including OBJ export with options. ABI 2 also
+provides AVT import in add mode, preserving the garment. Unknown options fail
+before export.
 
 Without the shim, FBX and tech pack return a clear error in the tested CLO build.
 GLB/glTF can use dialog fallbacks only when no options were supplied.
@@ -250,7 +253,9 @@ cmake --build build --config Release
 
 The plug-in picks it up automatically. It links **no Qt** and needs no install
 step. See [`cpp/clo_shim.cpp`](cpp/clo_shim.cpp) for how it reaches CLO's own
-API pointers.
+API pointers. Rebuild after updating: the new library is named
+`libclo_shim_v2.dylib` on macOS (`clo_shim_v2.dll` with MSVC). If you use
+`CLO_SHIM_PATH`, update it to that library, then restart the bridge.
 
 ---
 
@@ -294,10 +299,10 @@ sentinel between commands. Neither can release CLO while an API call is blocked.
 
 | | macOS (arm64) | Windows |
 |---|---|---|
-| MCP server + 48 tools | offline tests pass; live fixes pending | untested |
-| Menu-item bridge | prior version tested; protocol 2 live check pending | untested |
+| MCP server + 48 tools | 48/48 live tools; 42 offline tests | untested |
+| Menu-item bridge | protocol 2 and stop/restart tested | untested |
 | Script Editor bridge | ❌ thread starves | unverified |
-| Native shim | clean build passes; previous exports tested | MSVC configured; build/load untested |
+| Native shim | ABI 2 build/load, exports and AVT tested | MSVC configured; build/load untested |
 | `dialog_watcher.py` | ✅ AppleScript | ❌ macOS only |
 
 Windows reports welcome.
@@ -361,10 +366,10 @@ visual fidelity or every property of every tool.
 headers by default (`CLO_SDK_DIR` overrides the SDK root). Binary strings are
 hints, not proof of callable Python bindings. Live checks remain necessary.
 
-Avatar import accepts `.avt` through `ImportFile` (potentially a dialog) and
-`.avac` through `ImportAVAC`. `apf_path` is supported only with `.avac`; invalid
+Avatar import accepts `.avt` through the native shim in **add mode**, preserving
+the garment, and `.avac` through `ImportAVAC`. `apf_path` is supported only with `.avac`; invalid
 combinations fail before import. Turntable output requires an image filename,
-not a directory. Tech pack output requires a `.json` filename and writes sidecars
+not a directory; it uses the working explicit-colorway overload. Tech pack output requires a `.json` filename and writes sidecars
 alongside it. Its default `m_bSaveZprj`/`m_bSaveZpac` flags can change the active
 project path; pass both as `false` to avoid those project saves.
 

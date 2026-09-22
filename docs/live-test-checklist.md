@@ -1,9 +1,10 @@
 # Prepared CLO validation
 
-**Status: pending.** The fix branch has been checked offline. CLO was closed
-when live validation was attempted: ping failed before any scene changes. Do
-not treat the earlier audit's live results as verification of these fixes.
-The user requested that subsequent live testing wait until CLO is available.
+**Status: completed on macOS arm64 / CLO 2026.1.224.** All 48 tools passed
+(52 calls), including the corrected avatar import, turntable and fabric/snapshot
+behavior. See the [live validation report](live-validation-2026-09-22.md).
+This checklist remains the procedure for subsequent runs; Windows and AVAC/APF
+fixtures still require separate validation.
 
 Running the harness without `--run-live` only prints preparation instructions;
 it does not start an MCP process, contact the bridge, launch CLO or click its UI.
@@ -53,7 +54,7 @@ A crash, forced termination or blocked dialog can also prevent automatic restore
 | Area | Check in CLO |
 |---|---|
 | Protocol 2 | Ping after readiness; two independent clients get their own read-only responses; stopping releases the UI; restarting gives a new session |
-| Avatar | `.avt` imports through `ImportFile`; avatar readback and visible scene are correct; `.avac` with an APF needs a separate fixture and check |
+| Avatar | `.avt` imports through native ImportAvatar in add mode; avatar readback and visible scene are correct; `.avac` with an APF needs a separate fixture and check |
 | Patterns | Copy offset is relative to the original; returned new index is usable; create/copy/delete counts change; rename reads back correctly |
 | Simulation | A valid simulation reports success; assess drape visually. Do not use a dangerous native failure to test false returns: that regression is covered offline |
 | Options | OBJ without avatar excludes avatar geometry; inspect FBX/GLB/glTF in a viewer; an unknown option fails before export; confirm no-shim fallback rejects supplied options |
@@ -62,13 +63,11 @@ A crash, forced termination or blocked dialog can also prevent automatic restore
 | Turntable | Four 512×512 images, different camera angles and real contents. Empty results must be an MCP error, not a pass |
 | Windows | Build with MSVC, inspect exported `clo_*` symbols, load through ctypes inside CLO, then run this same suite |
 
-**Turntable is still unresolved at the CLO API level.** If the corrected harness
-still reports no images, retain its arguments, response, bridge log, CLO version
-and scene. Compare the SDK's `ExportTurntableImages(path, count, width, height)`
-sample and colorway-specific overload in a disposable session. The Python
-signature already matched the SDK during the original audit; another arity change
-is not justified without evidence. Do not claim a functional fix until real image
-outputs have been produced and inspected.
+**Turntable workaround is verified.** The ordinary path overload returned no
+images in both Python and C++ on 2026.1.224. The bridge now uses the explicit
+current-colorway overload, which produced four distinct 512×512 images. If it
+regresses on another CLO release, retain the request, response, bridge log and
+scene before comparing overloads; do not mask empty output as success.
 
 For Codex's native tool list, restart the Codex client after registration/config
 changes. The harness uses its own stdio client and needs no Codex restart.

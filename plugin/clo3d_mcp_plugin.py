@@ -280,7 +280,7 @@ def handle_get_project_info(params):
     minor = utility_api.GetMinorVersion()
     patch = utility_api.GetPatchVersion()
     pattern_count = pattern_api.GetPatternCount()
-    fabric_count = fabric_api.GetFabricCount()
+    fabric_count = fabric_api.GetFabricCount(False)
     colorway_count = utility_api.GetColorwayCount()
     return {
         "project_name": name,
@@ -410,15 +410,15 @@ def handle_get_arrangement_list(params):
 # -- Fabric --
 
 def handle_get_fabric_count(params):
-    count = fabric_api.GetFabricCount()
+    count = fabric_api.GetFabricCount(False)
     return {"count": count}
 
 
 def handle_get_fabric_list(params):
-    count = fabric_api.GetFabricCount(True)
+    count = fabric_api.GetFabricCount(False)
     fabrics = []
     for i in range(count):
-        fabrics.append({"index": i})
+        fabrics.append({"index": i, "name": fabric_api.GetFabricName(i)})
     return {"fabrics": fabrics, "count": count}
 
 
@@ -607,8 +607,10 @@ def handle_export_thumbnail(params):
 
 def handle_export_snapshot(params):
     file_path = params["file_path"]
+    # CLO returns vector<vector<string>> grouped by colorway/view.
     result = export_api.ExportSnapshot3D(file_path)
-    return {"exported": bool(result), "file_path": result or file_path}
+    paths = [path for group in result for path in group] if result else []
+    return {"exported": bool(paths), "file_paths": paths}
 
 
 def handle_export_turntable(params):
@@ -620,9 +622,13 @@ def handle_export_turntable(params):
         raise ValueError("Image count and dimensions must be positive")
     if os.path.splitext(file_path)[1].lower() not in (".png", ".jpg", ".jpeg"):
         raise ValueError("Turntable output must be an image filename, such as /output/view.png")
-    result = export_api.ExportTurntableImages(file_path, num_images, width, height)
+    # The ordinary path overload returns [] on 2026.1.224 in Python AND C++.
+    # The explicit current-colorway overload produces the requested images.
+    colorway = utility_api.GetCurrentColorwayIndex()
+    result = export_api.ExportTurntableImagesByColorwayIndex(
+        file_path, num_images, colorway, width, height)
     if not result:
-        raise RuntimeError("CLO ExportTurntableImages returned no images; turntable export failed")
+        raise RuntimeError("CLO ExportTurntableImagesByColorwayIndex returned no images; turntable export failed")
     if len(result) != num_images or any(not os.path.isfile(p) for p in result):
         raise RuntimeError("CLO did not produce all requested turntable images")
     return {"exported": True, "file_paths": result,
@@ -690,7 +696,16 @@ def handle_import_avatar(params):
     elif extension == ".avt":
         if apf_path:
             raise ValueError("apf_path is supported only for .avac; import the .avt without it")
-        result = import_api.ImportFile(file_path)
+        sh = _shim()
+        if sh is None:
+            raise RuntimeError("AVT import requires the updated native shim; build cpp/ first")
+        before = export_api.GetAvatarCount()
+        pattern_count = pattern_api.GetPatternCount()
+        result = sh.import_avatar(file_path)
+        if not result or export_api.GetAvatarCount() <= before:
+            raise RuntimeError("Avatar import did not add an avatar")
+        if pattern_api.GetPatternCount() != pattern_count:
+            raise RuntimeError("Avatar import unexpectedly changed the garment pattern count")
     else:
         raise ValueError("Avatar file must be .avt or .avac")
     return {"imported": result, "file_path": file_path}
@@ -882,7 +897,7 @@ def process_command(data):
 
     try:
         result = handler(params)
-        for flag in ("opened", "saved", "imported", "exported", "simulated", "copied", "created", "deleted"):
+        for flag in ("opened", "saved", "imported", "exported", "simulated", "copied", "created", "deleted", "added", "replaced", "assigned"):
             if result.get(flag) is False:
                 raise RuntimeError(cmd_type + " reported " + flag + "=false")
         # With live preview on, force the viewport to redraw after anything

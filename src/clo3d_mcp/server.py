@@ -171,7 +171,7 @@ def get_arrangement_list() -> dict:
 
 @mcp.tool()
 def get_fabric_list() -> dict:
-    """Get a list of all fabrics in the current project with their indices."""
+    """Get all fabrics, including unused fabrics, with their indices and names."""
     return _send("get_fabric_list")
 
 
@@ -356,7 +356,7 @@ def export_turntable(
 
     Args:
         file_path: Absolute image filename, such as /output/view.png.
-            CLO 2026.1.224 may return no images; this is reported as an error.
+            Uses the current colorway to work around the broken ordinary path overload.
         number_of_images: How many frames to render around the turn.
         width: Frame width in pixels.
         height: Frame height in pixels.
@@ -501,7 +501,7 @@ def import_avatar(file_path: str, apf_path: str = "") -> dict:
     Args:
         file_path: Absolute path to the avatar file (.avt or .avac).
         apf_path: Optional pose (.apf), supported only with .avac.
-            .avt uses CLO ImportFile and may show an import dialog.
+            .avt requires native shim ABI 2 and adds the avatar without replacing the garment.
     """
     return _send("import_avatar", {"file_path": file_path, "apf_path": apf_path})
 
@@ -511,7 +511,7 @@ def import_avatar(file_path: str, apf_path: str = "") -> dict:
 
 @mcp.tool()
 def get_fabric_count() -> dict:
-    """Get the number of fabrics in the current project."""
+    """Get the total number of fabrics, including unused fabrics, in the current project."""
     return _send("get_fabric_count")
 
 

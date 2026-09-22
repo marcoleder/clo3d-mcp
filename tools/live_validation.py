@@ -5,7 +5,7 @@ import struct
 from urllib.parse import unquote
 import zipfile
 
-FAILURE_FLAGS = {"opened", "saved", "exported", "imported", "created", "copied", "deleted", "simulated"}
+FAILURE_FLAGS = {"opened", "saved", "exported", "imported", "created", "copied", "deleted", "simulated", "added", "replaced", "assigned"}
 
 
 def validate_result(tool, payload, arguments):

@@ -140,6 +140,7 @@ def exercise():
             "add_fabric": ("get_fabric_count", 1),
             "import_fabric": ("get_fabric_count", 1),
             "delete_fabric": ("get_fabric_count", -1),
+            "import_avatar": ("get_avatars", 1),
             "copy_colorway": ("get_colorways", 1),
             "delete_colorway": ("get_colorways", -1),
         }
@@ -150,7 +151,15 @@ def exercise():
                 before_ok, before = box["srv"].call(check[0])
                 if not before_ok:
                     raise ValueError("Cannot read precondition: " + str(before))
+            if tool == "import_avatar":
+                patterns_ok, patterns_before = box["srv"].call("get_pattern_list")
+                if not patterns_ok:
+                    raise ValueError("Cannot read garment before avatar import")
             ok, payload = box["srv"].call(tool, args, timeout)
+            if ok and tool == "import_avatar":
+                patterns_ok, patterns_after = box["srv"].call("get_pattern_list")
+                if not patterns_ok or patterns_before != patterns_after:
+                    raise ValueError("Avatar import changed the garment patterns")
             if ok and check:
                 after_ok, after = box["srv"].call(check[0])
                 delta = after.get("count", 0) - before["count"] if after_ok else 0
