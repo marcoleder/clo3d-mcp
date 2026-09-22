@@ -15,6 +15,11 @@
 #--------------------------------------------------------------------------------
 cmake_minimum_required(VERSION 3.20)
 
+# Match the bundled 2026.1 SDK library's minimum OS; respect explicit overrides.
+if(CMAKE_HOST_APPLE AND NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "15.0" CACHE STRING "Minimum macOS version")
+endif()
+
 project(clo_shim
     DESCRIPTION "C ABI shim for CLO APIs unreachable from Python"
     VERSION 2026.1.224
@@ -43,6 +48,8 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
     CXX_EXTENSIONS OFF
     # no "lib" prefix games: keep the name stable for ctypes
     PREFIX "lib"
+    # Versioned filename avoids reusing a loaded ABI-1 image after an upgrade.
+    OUTPUT_NAME "clo_shim_v2"
 )
 
 if(APPLE)
@@ -50,18 +57,10 @@ if(APPLE)
 elseif(MSVC)
     target_compile_definitions(${PROJECT_NAME} PRIVATE UNICODE _WINDOWS _USRDLL)
     set_target_properties(${PROJECT_NAME} PROPERTIES
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
         MSVC_RUNTIME_LIBRARY "MultiThreadedDLL"   # must match CLO
-        PREFIX ""                                  # -> clo_shim.dll
+        PREFIX ""                                  # -> clo_shim_v2.dll
     )
-
-    # must match CLO (LSMinimumSystemVersion 12.0)
-    set(CMAKE_OSX_DEPLOYMENT_TARGET 12.0)
-    if ("${CMAKE_OSX_ARCHITECTURES}" STREQUAL "")
-        execute_process(COMMAND uname -m COMMAND tr -d '\n'
-                        OUTPUT_VARIABLE osx_architecture)
-        set(CMAKE_OSX_ARCHITECTURES ${osx_architecture})
-    endif()
-    message("-- Target architecture: ${CMAKE_OSX_ARCHITECTURES}")
 endif()
 
 target_include_directories(${PROJECT_NAME} PRIVATE "${CLO_SDK_DIR}/CLOAPIInterface")

@@ -25,3 +25,8 @@ clo3d-mcp = "clo3d_mcp:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/clo3d_mcp"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

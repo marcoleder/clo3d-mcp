@@ -1,7 +1,7 @@
 """
 CLO3D MCP Server: FastMCP server exposing CLO3D tools to LLMs.
 
-Bridges Claude/Cursor and CLO3D via the Model Context Protocol.
+Bridges Codex/Claude/Cursor and CLO3D via the Model Context Protocol.
 Communicates with the CLO3D plugin through a shared file directory.
 """
 
@@ -39,6 +39,11 @@ def new_project() -> dict:
 @mcp.tool()
 def open_file(file_path: str) -> dict:
     """Open a file in CLO3D. Supports .zprj, .zpac, .avt, .obj, .fbx formats.
+
+    A .zprj open verifies the active project path. An already active path is
+    an explicit no-op (already_active=True), preserving unsaved edits. Avatar
+    and fabric files use dedicated import handlers. An unverifiable import
+    blocks further mutations until a distinct .zprj backup is opened; do not retry.
 
     Args:
         file_path: Absolute path to the file to open.
@@ -171,7 +176,7 @@ def get_arrangement_list() -> dict:
 
 @mcp.tool()
 def get_fabric_list() -> dict:
-    """Get a list of all fabrics in the current project with their indices."""
+    """Get all fabrics, including unused fabrics, with their indices and names."""
     return _send("get_fabric_list")
 
 
@@ -267,9 +272,8 @@ def export_obj(file_path: str, options: dict | None = None) -> dict:
         file_path: Absolute path for the exported .obj file.
         options: Optional export options (bExportGarment, bExportAvatar, bThin, scale, etc.).
 
-    Works on CLO 2026.1 only WITHOUT options: ExportOBJ(filePath) is the one
-    export with an option-free overload. Passing options fails, because CLO's
-    Python bindings do not expose the ImportExportOption type.
+    Options require the native shim or a constructible Python option type.
+    Without options, the Python overload may open an export dialog.
     """
     params = {"file_path": file_path}
     if options:
@@ -285,8 +289,7 @@ def export_fbx(file_path: str, options: dict | None = None) -> dict:
         file_path: Absolute path for the exported .fbx file.
         options: Optional export options (bExportGarment, bExportAvatar, scale, etc.).
 
-    Note: on CLO 2026.1 this fails — CLO's Python bindings do not expose the
-    ImportExportOption type that every ExportFBX overload requires.
+    CLO 2026.1 requires the native shim for this export.
     """
     params = {"file_path": file_path}
     if options:
@@ -305,8 +308,7 @@ def export_glb(file_path: str, options: dict | None = None) -> dict:
     params = {"file_path": file_path}
     if options:
         params["options"] = options
-    # CLO 2026.1: falls back to ExportGLBWithDialog, which opens CLO's
-    # export dialog and needs a human click.
+    # Without the shim, dialog fallback is available only without options.
     return _send("export_glb", params)
 
 
@@ -321,8 +323,7 @@ def export_gltf(file_path: str, options: dict | None = None) -> dict:
     params = {"file_path": file_path}
     if options:
         params["options"] = options
-    # CLO 2026.1: falls back to ExportGLTFWithDialog, which opens CLO's
-    # export dialog and needs a human click.
+    # Without the shim, dialog fallback is available only without options.
     return _send("export_gltf", params)
 
 
@@ -334,8 +335,7 @@ def export_thumbnail(file_path: str) -> dict:
         file_path: Absolute path for the exported image file.
 
     Note: CLO's ExportThumbnail3D takes no size arguments — the thumbnail
-    dimensions are fixed by the application. Use export_turntable for
-    size-controlled renders.
+    dimensions are fixed by the application.
     """
     return _send("export_thumbnail", {"file_path": file_path})
 
@@ -343,6 +343,9 @@ def export_thumbnail(file_path: str) -> dict:
 @mcp.tool()
 def export_snapshot(file_path: str) -> dict:
     """Export multi-view snapshot images of the 3D garment.
+
+    Returns file_paths as a flat list of verified, nonempty files. The legacy
+    file_path key preserves CLO's original result (string or nested path list).
 
     Args:
         file_path: Absolute path (directory or base name) for snapshot images.
@@ -360,7 +363,8 @@ def export_turntable(
     """Export a 360-degree turntable image sequence.
 
     Args:
-        file_path: Absolute path (directory or base name) for turntable images.
+        file_path: Absolute image filename, such as /output/view.png.
+            Uses the current colorway to work around the broken ordinary path overload.
         number_of_images: How many frames to render around the turn.
         width: Frame width in pixels.
         height: Frame height in pixels.
@@ -381,7 +385,8 @@ def export_tech_pack(file_path: str, options: dict | None = None) -> dict:
     """Export a tech pack with JSON metadata and images.
 
     Args:
-        file_path: Absolute path for the tech pack output.
+        file_path: Absolute .json filename; sidecar files are written alongside it.
+            Default m_bSaveZprj/m_bSaveZpac flags can change the active project path.
         options: Optional flags — m_bSaveZprj, m_bSaveZpac, m_bExportTextures,
             m_bCaptureItemThumbnail, m_bShowModalProgressBar, m_bUseAverageColor.
     """
@@ -397,6 +402,11 @@ def export_tech_pack(file_path: str, options: dict | None = None) -> dict:
 @mcp.tool()
 def import_file(file_path: str) -> dict:
     """Import a file into CLO3D. Auto-detects type from extension (.zprj, .zpac, .obj, .fbx, .avt, etc.).
+
+    Uses the same verification and already-active no-op behavior as open_file.
+    Nonproject imports must change observable scene state; uncertain outcomes
+    block further mutations. AVT requires native shim ABI 2; there is no generic
+    ImportFile fallback because it can replace the garment.
 
     Args:
         file_path: Absolute path to the file to import.
@@ -501,9 +511,14 @@ def show_hide_avatar(show: bool = True) -> dict:
 def import_avatar(file_path: str, apf_path: str = "") -> dict:
     """Import an avatar into the current project.
 
+    Verifies avatar count growth and unchanged garment names/count and project
+    path. A failed postcondition may leave an added avatar: it is not rolled
+    back. Further mutations are blocked until a distinct .zprj backup is loaded.
+
     Args:
-        file_path: Absolute path to the avatar file (.avt).
-        apf_path: Optional absolute path to an avatar pose file (.apf).
+        file_path: Absolute path to the avatar file (.avt or .avac).
+        apf_path: Optional pose (.apf), supported only with .avac.
+            .avt requires native shim ABI 2 and adds the avatar without replacing the garment.
     """
     return _send("import_avatar", {"file_path": file_path, "apf_path": apf_path})
 
@@ -513,7 +528,7 @@ def import_avatar(file_path: str, apf_path: str = "") -> dict:
 
 @mcp.tool()
 def get_fabric_count() -> dict:
-    """Get the number of fabrics in the current project."""
+    """Get the total number of fabrics, including unused fabrics, in the current project."""
     return _send("get_fabric_count")
 
 
@@ -595,3 +610,13 @@ def set_live_preview(enabled: bool = True, path: str | None = None) -> dict:
     if path:
         params["path"] = path
     return _send("set_live_preview", params)
+
+
+@mcp.tool()
+def stop_bridge() -> dict:
+    """Release CLO's UI by stopping the shared bridge after current work.
+
+    Affects all connected clients. Restart the bridge in CLO before using more
+    tools. Cannot interrupt an in-progress native call or a modal dialog.
+    """
+    return _send("stop_bridge")

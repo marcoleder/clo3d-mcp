@@ -4,6 +4,11 @@ import sys
 import time
 import threading
 
+# Shared transport has no third-party dependencies; CLO does not need mcp installed.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
+from clo3d_mcp.ipc import PROTOCOL, BridgeQueue, bridge_lock, comm_directory, atomic_json
+from clo3d_mcp.contracts import FAILURE_FLAGS, OperationOutcomeUnknown, export_paths, same_project_path
+
 try:
     import clo_shim as _clo_shim_mod
 except Exception:            # never let the shim break the bridge
@@ -31,11 +36,7 @@ except ImportError as _e:
     print("[CLO MCP] WARNING: Not running inside CLO3D. API calls will fail.")
 
 # Communication directory
-COMM_DIR = os.environ.get("CLO3D_MCP_DIR") or os.path.join(
-    os.environ.get("TEMP", os.path.expanduser("~")), "clo3d_mcp"
-)
-REQUEST_FILE = os.path.join(COMM_DIR, "request.json")
-RESPONSE_FILE = os.path.join(COMM_DIR, "response.json")
+COMM_DIR = comm_directory()
 POLL_INTERVAL = 0.1
 
 # When CLO runs this from the Plugins menu, print() goes nowhere visible.
@@ -46,7 +47,10 @@ LOG_FILE = os.path.join(COMM_DIR, "bridge.log")
 def log(msg):
     """Append a timestamped line to bridge.log; never raise."""
     line = time.strftime("%H:%M:%S ") + str(msg)
-    print("[CLO MCP] " + str(msg))
+    try:
+        print("[CLO MCP] " + str(msg))
+    except Exception:
+        pass
     try:
         os.makedirs(COMM_DIR, exist_ok=True)
         with open(LOG_FILE, "a") as fh:
@@ -63,6 +67,12 @@ _deadline = None
 # ---------------------------------------------------------------------------
 # Command handlers
 # ---------------------------------------------------------------------------
+
+def handle_stop_bridge(params):
+    global _server_running
+    _server_running = False
+    return {"stopped": True}
+
 
 def handle_ping(params):
     return {"pong": True, "in_clo3d": IN_CLO3D}
@@ -83,9 +93,9 @@ def handle_debug_modules(params):
     """Exhaustive hunt for the option types + full module dumps.
 
     Earlier introspection checked only five modules and reported no classes,
-    but libCloScene.dylib contains "ImportExportOption" followed by every one
-    of its field names - the signature of a pybind11 class registration with
-    def_readwrite. So it is registered somewhere. This looks everywhere.
+    and binary strings include "ImportExportOption" and its field names.
+    Strings alone do not establish Python registration; inspect reachable
+    modules to gather runtime evidence.
     """
     import importlib
 
@@ -128,11 +138,12 @@ def handle_debug_modules(params):
 
 # commands that only read state — never worth a repaint
 _READ_ONLY = {
-    "ping", "get_project_info", "get_garment_info", "get_pattern_count",
+    "ping", "stop_bridge", "get_project_info", "get_garment_info", "get_pattern_count",
     "get_pattern_list", "get_pattern_info", "get_pattern_bounding_box",
     "get_arrangement_list", "get_fabric_list", "get_fabric_count",
     "get_fabric_for_pattern", "get_colorways", "get_avatars",
-    "get_avatar_genders", "refresh_view", "set_live_preview",
+    "get_avatar_genders", "get_bounding_box",
+    "refresh_view", "set_live_preview",
     "debug_api", "debug_sig", "debug_modules", "debug_shim",
 }
 
@@ -274,7 +285,7 @@ def handle_get_project_info(params):
     minor = utility_api.GetMinorVersion()
     patch = utility_api.GetPatchVersion()
     pattern_count = pattern_api.GetPatternCount()
-    fabric_count = fabric_api.GetFabricCount()
+    fabric_count = fabric_api.GetFabricCount(-2)
     colorway_count = utility_api.GetColorwayCount()
     return {
         "project_name": name,
@@ -291,10 +302,60 @@ def handle_new_project(params):
     return {"created": True}
 
 
+def _scene_signature():
+    """Observable identity, deliberately excluding transient rendering data."""
+    return {
+        "project_path": utility_api.GetProjectFilePath(),
+        "patterns": [pattern_api.GetPatternPieceName(i)
+                     for i in range(pattern_api.GetPatternCount())],
+        "avatars": export_api.GetAvatarCount(),
+        "avatar_names": export_api.GetAvatarNameList(),
+        "fabrics": fabric_api.GetFabricCount(-2),
+        "colorways": utility_api.GetColorwayCount(),
+    }
+
+
+def _import_file_checked(file_path):
+    if not os.path.isfile(file_path):
+        raise FileNotFoundError(file_path)
+    extension = os.path.splitext(file_path)[1].lower()
+    # Generic ImportFile may replace the garment. Always use the dedicated
+    # verified add route for avatar/fabric imports.
+    if extension in (".avt", ".avac"):
+        return handle_import_avatar({"file_path": file_path})
+    if extension in (".zfab", ".jfab"):
+        return handle_import_fabric({"file_path": file_path})
+    before = utility_api.GetProjectFilePath()
+    if extension == ".zprj" and same_project_path(before, file_path):
+        if _review_required():
+            raise RuntimeError("Restore a distinct .zprj backup to resolve the uncertain scene; "
+                               "a reload of the active path cannot be verified")
+        # Opening an already active project is an explicit no-op; it must not
+        # pretend to reload unsaved edits via an unverifiable ImportFile call.
+        return {"verified": True, "already_active": True}
+    signature = _scene_signature() if extension != ".zprj" else None
+    camera = utility_api.GetCustomViewInformation() if extension == ".zcmr" else None
+    try:
+        result = import_api.ImportFile(file_path)
+        if not result:
+            raise RuntimeError("ImportFile returned false")
+        if extension == ".zprj":
+            actual = utility_api.GetProjectFilePath()
+            if not same_project_path(actual, file_path):
+                raise RuntimeError("Requested project is not active after ImportFile: " + str(actual))
+            _clear_review()
+        elif (_scene_signature() == signature
+              and (extension != ".zcmr" or utility_api.GetCustomViewInformation() == camera)):
+            raise RuntimeError("ImportFile returned true without an observable scene change")
+    except Exception as exc:
+        raise OperationOutcomeUnknown(str(exc)) from exc
+    return {"verified": True, "already_active": False}
+
+
 def handle_open_file(params):
     file_path = params["file_path"]
-    result = import_api.ImportFile(file_path)
-    return {"opened": result, "file_path": file_path}
+    details = _import_file_checked(file_path)
+    return dict(details, opened=True, file_path=file_path)
 
 
 def handle_save_file(params):
@@ -358,8 +419,10 @@ def handle_copy_pattern(params):
     index = params["pattern_index"]
     x = params.get("x", 0)
     y = params.get("y", 0)
-    pattern_api.CopyPatternPiecePos(index, x, y)
-    return {"copied": True, "source_index": index, "position": [x, y]}
+    new_index = pattern_api.CopyPatternPieceMove(index, float(x), float(y))
+    if new_index < 0:
+        raise RuntimeError("CopyPatternPieceMove failed")
+    return {"copied": True, "source_index": index, "new_index": new_index, "offset": [x, y]}
 
 
 def handle_delete_pattern(params):
@@ -387,7 +450,10 @@ def handle_create_pattern(params):
         # int in the x/y slots is rejected outright ("incompatible function
         # arguments") rather than promoted. Coerce explicitly.
         point_tuples.append((float(x), float(y), int(vtype)))
+    count_before = pattern_api.GetPatternCount()
     result = pattern_api.CreatePatternWithPoints(point_tuples)
+    if result < 0 or pattern_api.GetPatternCount() <= count_before:
+        raise RuntimeError("CreatePatternWithPoints failed")
     return {"created": True, "point_count": len(point_tuples), "result": result}
 
 
@@ -399,21 +465,33 @@ def handle_get_arrangement_list(params):
 # -- Fabric --
 
 def handle_get_fabric_count(params):
-    count = fabric_api.GetFabricCount()
+    count = fabric_api.GetFabricCount(-2)
     return {"count": count}
 
 
 def handle_get_fabric_list(params):
-    count = fabric_api.GetFabricCount(True)
+    count = fabric_api.GetFabricCount(-2)
     fabrics = []
     for i in range(count):
-        fabrics.append({"index": i})
+        fabrics.append({"index": i, "name": fabric_api.GetFabricName(i)})
     return {"fabrics": fabrics, "count": count}
+
+
+def _add_fabric(file_path):
+    before = fabric_api.GetFabricCount(-2)
+    try:
+        index = fabric_api.AddFabric(file_path)
+        after = fabric_api.GetFabricCount(-2)
+        if type(index) is not int or not 0 <= index < after or after <= before:
+            raise RuntimeError("AddFabric did not return a valid new fabric")
+        return index
+    except Exception as exc:
+        raise OperationOutcomeUnknown(str(exc)) from exc
 
 
 def handle_add_fabric(params):
     file_path = params["file_path"]
-    index = fabric_api.AddFabric(file_path)
+    index = _add_fabric(file_path)
     return {"added": True, "fabric_index": index, "file_path": file_path}
 
 
@@ -437,7 +515,8 @@ def handle_set_fabric_color(params):
     g_f = g / 255.0
     b_f = b / 255.0
     a_f = a / 255.0
-    fabric_api.SetFabricPBRMaterialBaseColor(fabric_index, material_face, r_f, g_f, b_f, a_f)
+    if not fabric_api.SetFabricPBRMaterialBaseColor(fabric_index, material_face, r_f, g_f, b_f, a_f):
+        raise RuntimeError("SetFabricPBRMaterialBaseColor returned false")
     return {"set": True, "fabric_index": fabric_index, "color": [r, g, b, a]}
 
 
@@ -499,6 +578,14 @@ def _unsupported(fn, typ="ImportExportOption"):
     return RuntimeError(_NO_OPTION_TYPE.format(ver=_clo_version(), typ=typ, fn=fn))
 
 
+def _apply_options(opt, options, kind="export"):
+    for key, value in (options or {}).items():
+        if not hasattr(opt, key):
+            raise ValueError("Unsupported %s option: %s" % (kind, key))
+        setattr(opt, key, value)
+    return opt
+
+
 def _build_export_option(options):
     """Return an ImportExportOption, or raise a clear error if impossible.
 
@@ -509,11 +596,7 @@ def _build_export_option(options):
         export_api, "NewImportExportOption", None)
     if ctor is None:
         raise _unsupported("ExportOBJ/FBX/GLB/GLTF")
-    opt = ctor()
-    for key, val in (options or {}).items():
-        if hasattr(opt, key):
-            setattr(opt, key, val)
-    return opt
+    return _apply_options(ctor(), options)
 
 
 def handle_export_obj(params):
@@ -521,19 +604,11 @@ def handle_export_obj(params):
     options = params.get("options", {})
     sh = _shim() if options else None
     if sh:
-        paths, rejected = sh.export_obj(file_path, options)
+        paths = sh.export_obj(file_path, options)
         return {"exported": bool(paths), "file_paths": paths, "format": "obj",
-                "via": "clo_shim", "rejected_options": rejected}
+                "via": "clo_shim"}
     if options:
-        # CLO 2026.1: ImportExportOption is a plain constructible struct.
-        # Older builds exposed a NewImportExportOption() factory.
-        if hasattr(export_api, "ImportExportOption"):
-            opt = export_api.ImportExportOption()
-        else:
-            opt = export_api.NewImportExportOption()
-        for key, val in options.items():
-            if hasattr(opt, key):
-                setattr(opt, key, val)
+        opt = _build_export_option(options)
         result = export_api.ExportOBJ(file_path, opt)
     else:
         result = export_api.ExportOBJ(file_path)
@@ -551,14 +626,11 @@ def handle_export_fbx(params):
     file_path = params["file_path"]
     sh = _shim()
     if sh:
-        paths, rejected = sh.export_fbx(file_path, params.get("options"))
+        paths = sh.export_fbx(file_path, params.get("options"))
         return {"exported": bool(paths), "file_paths": paths, "format": "fbx",
-                "via": "clo_shim", "rejected_options": rejected}
-    if not hasattr(export_api, "ImportExportOption"):
-        # every ExportFBX overload takes ImportExportOption, and unlike GLB/GLTF
-        # there is no ...WithDialog variant to fall back to
-        raise _unsupported("ExportFBX")
-    result = export_api.ExportFBX(file_path, _build_export_option(params.get("options")))
+                "via": "clo_shim"}
+    options = _build_export_option(params.get("options"))
+    result = export_api.ExportFBX(file_path, options)
     return {"exported": bool(result), "file_path": result or file_path, "format": "fbx"}
 
 
@@ -566,12 +638,12 @@ def handle_export_glb(params):
     file_path = params["file_path"]
     sh = _shim()
     if sh:
-        paths, rejected = sh.export_glb(file_path, params.get("options"))
+        paths = sh.export_glb(file_path, params.get("options"))
         return {"exported": bool(paths), "file_paths": paths, "format": "glb",
-                "via": "clo_shim", "rejected_options": rejected}
-    if hasattr(export_api, "ImportExportOption"):
+                "via": "clo_shim"}
+    if hasattr(export_api, "ImportExportOption") or hasattr(export_api, "NewImportExportOption"):
         result = export_api.ExportGLB(file_path, _build_export_option(params.get("options")))
-    elif hasattr(export_api, "ExportGLBWithDialog"):
+    elif not params.get("options") and hasattr(export_api, "ExportGLBWithDialog"):
         # opens CLO's export dialog; needs a human click but is the only
         # route available while the option type is unregistered
         result = export_api.ExportGLBWithDialog(file_path)
@@ -584,14 +656,14 @@ def handle_export_gltf(params):
     file_path = params["file_path"]
     sh = _shim()
     if sh:
-        paths, rejected = sh.export_gltf(file_path, params.get("options"), binary=False)
+        paths = sh.export_gltf(file_path, params.get("options"), binary=False)
         return {"exported": bool(paths), "file_paths": paths, "format": "gltf",
-                "via": "clo_shim", "rejected_options": rejected}
-    if hasattr(export_api, "ImportExportOption"):
+                "via": "clo_shim"}
+    if hasattr(export_api, "ImportExportOption") or hasattr(export_api, "NewImportExportOption"):
         result = export_api.ExportGLTF(
             file_path, _build_export_option(params.get("options")), False
         )
-    elif hasattr(export_api, "ExportGLTFWithDialog"):
+    elif not params.get("options") and hasattr(export_api, "ExportGLTFWithDialog"):
         result = export_api.ExportGLTFWithDialog(file_path, False)
     else:
         raise _unsupported("ExportGLTF")
@@ -606,8 +678,13 @@ def handle_export_thumbnail(params):
 
 def handle_export_snapshot(params):
     file_path = params["file_path"]
+    # CLO returns vector<vector<string>> grouped by colorway/view.
     result = export_api.ExportSnapshot3D(file_path)
-    return {"exported": bool(result), "file_path": result or file_path}
+    paths = export_paths(result)
+    if any(not os.path.isfile(path) or os.path.getsize(path) == 0 for path in paths):
+        raise RuntimeError("CLO did not produce all snapshot files")
+    # Preserve the historical SDK-shaped key while providing normalized paths.
+    return {"exported": True, "file_paths": paths, "file_path": result}
 
 
 def handle_export_turntable(params):
@@ -615,27 +692,60 @@ def handle_export_turntable(params):
     num_images = params.get("number_of_images", 36)
     width = params.get("width", 2500)
     height = params.get("height", 2500)
-    result = export_api.ExportTurntableImages(file_path, num_images, width, height)
-    return {"exported": bool(result), "file_path": result or file_path,
+    if num_images <= 0 or width <= 0 or height <= 0:
+        raise ValueError("Image count and dimensions must be positive")
+    if os.path.splitext(file_path)[1].lower() not in (".png", ".jpg", ".jpeg"):
+        raise ValueError("Turntable output must be an image filename, such as /output/view.png")
+    # The ordinary path overload returns [] on 2026.1.224 in Python AND C++.
+    # The explicit current-colorway overload produces the requested images.
+    colorway = utility_api.GetCurrentColorwayIndex()
+    result = export_api.ExportTurntableImagesByColorwayIndex(
+        file_path, num_images, colorway, width, height)
+    if not result:
+        raise RuntimeError("CLO ExportTurntableImagesByColorwayIndex returned no images; turntable export failed")
+    if len(result) != num_images or any(not os.path.isfile(p) for p in result):
+        raise RuntimeError("CLO did not produce all requested turntable images")
+    return {"exported": True, "file_paths": result,
             "number_of_images": num_images, "width": width, "height": height}
+
+
+def _file_stamp(file_path):
+    try:
+        stat = os.stat(file_path)
+        return stat.st_mtime_ns, stat.st_size
+    except FileNotFoundError:
+        return None
+
+
+def _verify_techpack(file_path, before=None):
+    if before is not None and _file_stamp(file_path) == before:
+        raise RuntimeError("CLO did not update the existing tech pack")
+    with open(file_path, encoding="utf-8") as stream:
+        if not json.load(stream):
+            raise RuntimeError("CLO produced an empty tech pack")
 
 
 def handle_export_tech_pack(params):
     file_path = params["file_path"]
-    # CLO 2026.1: ExportTechPack(filePath, ExportTechpackOption) returns void,
-    # so success is "no exception raised" — bool(result) would always be False.
+    # ExportTechPack returns void: verify the JSON artifact before reporting success.
+    if os.path.splitext(file_path)[1].lower() != ".json":
+        raise ValueError("Tech pack output must be a .json filename")
+    before = _file_stamp(file_path)
     sh = _shim()
     if sh:
-        rejected = sh.export_techpack(file_path, params.get("options"))
+        sh.export_techpack(file_path, params.get("options"))
+        _verify_techpack(file_path, before)
         return {"exported": True, "file_path": file_path,
-                "via": "clo_shim", "rejected_options": rejected}
+                "via": "clo_shim"}
     if not hasattr(export_api, "ExportTechpackOption"):
         # ExportTechPack(str, ExportTechpackOption) is the only overload.
         # ExportTechPackToStream(str) exists and needs no option type, but it
         # returns the pack as a stream rather than writing file_path, so it is
         # not a drop-in substitute — surface the limitation instead.
         raise _unsupported("ExportTechPack", typ="ExportTechpackOption")
-    export_api.ExportTechPack(file_path, export_api.ExportTechpackOption())
+    opt = _apply_options(export_api.ExportTechpackOption(), params.get("options"), "tech pack")
+    export_api.ExportTechPack(file_path, opt)
+    _verify_techpack(file_path, before)
     return {"exported": True, "file_path": file_path}
 
 
@@ -643,20 +753,43 @@ def handle_export_tech_pack(params):
 
 def handle_import_file(params):
     file_path = params["file_path"]
-    result = import_api.ImportFile(file_path)
-    return {"imported": result, "file_path": file_path}
+    details = _import_file_checked(file_path)
+    return dict(details, imported=True, file_path=file_path)
 
 
 def handle_import_avatar(params):
     file_path = params["file_path"]
     apf_path = params.get("apf_path", "")
-    result = import_api.ImportAVAC(file_path, apf_path)
-    return {"imported": result, "file_path": file_path}
+    extension = os.path.splitext(file_path)[1].lower()
+    if extension not in (".avt", ".avac"):
+        raise ValueError("Avatar file must be .avt or .avac")
+    sh = None
+    if extension == ".avt":
+        if apf_path:
+            raise ValueError("apf_path is supported only for .avac; import the .avt without it")
+        sh = _shim()
+        if sh is None or sh.abi < 2:
+            raise RuntimeError("AVT import requires the updated native shim (ABI 2); build cpp/ first")
+    before = export_api.GetAvatarCount()
+    patterns = handle_get_pattern_list({})
+    project = utility_api.GetProjectFilePath()
+    try:
+        result = (sh.import_avatar(file_path) if sh is not None
+                  else import_api.ImportAVAC(file_path, apf_path))
+        if not result or export_api.GetAvatarCount() <= before:
+            raise RuntimeError("Avatar import did not add an avatar")
+        if handle_get_pattern_list({}) != patterns or utility_api.GetProjectFilePath() != project:
+            raise RuntimeError("Avatar import unexpectedly changed the garment or project")
+    except Exception as exc:
+        # No reliable avatar-delete/rollback API is available. Mark the outcome
+        # as uncertain and block further mutations until a verified recovery.
+        raise OperationOutcomeUnknown(str(exc)) from exc
+    return {"imported": True, "file_path": file_path}
 
 
 def handle_import_fabric(params):
     file_path = params["file_path"]
-    index = fabric_api.AddFabric(file_path)
+    index = _add_fabric(file_path)
     return {"imported": True, "fabric_index": index, "file_path": file_path}
 
 
@@ -664,7 +797,8 @@ def handle_import_fabric(params):
 
 def handle_simulate(params):
     steps = params.get("steps", 100)
-    utility_api.Simulate(steps)
+    if not utility_api.Simulate(steps):
+        raise RuntimeError("Simulate returned false")
     return {"simulated": True, "steps": steps}
 
 
@@ -756,6 +890,7 @@ def handle_get_avatar_genders(params):
 
 HANDLERS = {
     "ping": handle_ping,
+    "stop_bridge": handle_stop_bridge,
     "debug_api": handle_debug_api,
     "debug_sig": handle_debug_sig,
     "debug_modules": handle_debug_modules,
@@ -813,6 +948,55 @@ HANDLERS = {
 # File-based communication
 # ---------------------------------------------------------------------------
 
+_review_state = None
+
+
+def _review_file():
+    return os.path.join(COMM_DIR, "scene-review-required.json")
+
+
+def _review_required():
+    # Existence is fail-closed even if an interrupted write/corruption lost details.
+    return _review_state is not None or os.path.exists(_review_file())
+
+
+def _persist_review():
+    if os.path.exists(_review_file()):
+        return True
+    if _review_state is None:
+        return False
+    try:
+        atomic_json(_review_file(), _review_state)
+        return True
+    except OSError as exc:
+        log("Cannot persist scene review; mutations remain blocked in memory: " + str(exc))
+        return False
+
+
+def _mark_review(details):
+    global _review_state
+    if _review_state is None:
+        _review_state = details
+    return _persist_review()
+
+
+def _abandoned_claims(paths):
+    return _mark_review({"command": "bridge_restart", "reason": "Abandoned request outcome is unknown",
+                         "claims": [path.name for path in paths]})
+
+
+def _clear_review():
+    global _review_state
+    if os.path.exists(_review_file()):
+        os.remove(_review_file())
+    _review_state = None
+
+
+def _is_recovery(command, params):
+    return command in ("open_file", "import_file") and os.path.splitext(
+        str(params.get("file_path", "")))[1].lower() == ".zprj"
+
+
 def process_command(data):
     """Parse and execute a single JSON command."""
     try:
@@ -820,10 +1004,14 @@ def process_command(data):
     except (json.JSONDecodeError, ValueError) as e:
         return json.dumps({"id": None, "status": "error", "message": "Invalid JSON: " + str(e)})
 
+    if not isinstance(request, dict):
+        return json.dumps({"id": None, "status": "error", "message": "Request must be an object"})
     req_id = request.get("id")
     cmd_type = request.get("type")
     params = request.get("params", {})
 
+    if not isinstance(cmd_type, str) or not isinstance(params, dict):
+        return json.dumps({"id": req_id, "status": "error", "message": "Invalid command or parameters"})
     handler = HANDLERS.get(cmd_type)
     if not handler:
         return json.dumps({
@@ -833,7 +1021,13 @@ def process_command(data):
         })
 
     try:
+        if _review_required() and cmd_type not in _READ_ONLY and not _is_recovery(cmd_type, params):
+            raise OperationOutcomeUnknown("A previous mutation needs scene review. "
+                                          "Inspect CLO and restore a distinct .zprj backup before more mutations")
         result = handler(params)
+        for flag in FAILURE_FLAGS:
+            if result.get(flag) is False:
+                raise RuntimeError(cmd_type + " reported " + flag + "=false")
         # With live preview on, force the viewport to redraw after anything
         # that changed state, so a batch can be watched as it happens.
         if _LIVE_PREVIEW["enabled"] and cmd_type not in _READ_ONLY:
@@ -843,81 +1037,52 @@ def process_command(data):
                 pass          # a preview failure must never fail the command
         return json.dumps({"id": req_id, "status": "success", "result": result})
     except Exception as e:
-        return json.dumps({
-            "id": req_id,
-            "status": "error",
-            "message": str(type(e).__name__) + ": " + str(e),
-        })
+        response = {"id": req_id, "status": "error",
+                    "message": str(type(e).__name__) + ": " + str(e)}
+        if isinstance(e, OperationOutcomeUnknown):
+            response.update(outcome="unknown", retry_safe=False, scene_review_required=True)
+            response["review_persisted"] = _mark_review(
+                {"command": cmd_type, "id": req_id, "reason": str(e)})
+        return json.dumps(response)
 
 
 def poll_loop():
-    """Poll for request files and process them."""
+    """Serve one command at a time on the calling thread."""
     global _server_running
-
-    # Create comm directory
-    if not os.path.exists(COMM_DIR):
-        os.makedirs(COMM_DIR)
-
-    # Clean up stale files
-    for f in [REQUEST_FILE, RESPONSE_FILE]:
-        if os.path.exists(f):
-            try:
-                os.remove(f)
-            except OSError:
-                pass
-
-    log("poll_loop listening in " + COMM_DIR)
-
-    stop_file = os.path.join(COMM_DIR, "stop")
-    if os.path.exists(stop_file):
-        try:
-            os.remove(stop_file)
-        except OSError:
-            pass
-
-    while _server_running:
-        if _deadline is not None and time.time() >= _deadline:
-            log("deadline reached; stopping")
-            break
+    with bridge_lock(COMM_DIR):
+        queue = BridgeQueue(COMM_DIR)
+        stop_file = os.path.join(COMM_DIR, "stop")
         if os.path.exists(stop_file):
-            log("stop file seen; releasing CLO")
-            try:
-                os.remove(stop_file)
-            except OSError:
-                pass
-            break
+            os.remove(stop_file)
+        queue.start(on_abandoned=_abandoned_claims)
+        log("protocol %s ready in %s" % (PROTOCOL, COMM_DIR))
         try:
-            if os.path.exists(REQUEST_FILE):
-                # Read request
-                with open(REQUEST_FILE, "r") as f:
-                    data = f.read()
-
-                # Delete request file
+            while _server_running:
+                if _deadline is not None and time.monotonic() >= _deadline:
+                    log("deadline reached; stopping between commands")
+                    break
                 try:
-                    os.remove(REQUEST_FILE)
-                except OSError:
-                    pass
-
-                if data.strip():
-                    # Process and write response
-                    response = process_command(data)
-
-                    # Write to temp file first, then rename (atomic)
-                    tmp_file = RESPONSE_FILE + ".tmp"
-                    with open(tmp_file, "w") as f:
-                        f.write(response)
-
-                    # Rename to final path
-                    if os.path.exists(RESPONSE_FILE):
-                        os.remove(RESPONSE_FILE)
-                    os.rename(tmp_file, RESPONSE_FILE)
-
-        except Exception as e:
-            print("[CLO MCP] Error: " + str(e))
-
-        time.sleep(POLL_INTERVAL)
-
-    log("poll_loop stopped")
+                    if os.path.exists(stop_file):
+                        try:
+                            os.remove(stop_file)
+                        except OSError:
+                            pass
+                        break
+                    if not _review_required() or _persist_review():
+                        queue.retire_abandoned()
+                    if not queue.process_one(process_command):
+                        time.sleep(POLL_INTERVAL)
+                except Exception as exc:
+                    _mark_review({"command": "bridge_io", "reason": str(exc)})
+                    log("Command loop error; no command replayed: " + str(exc))
+                    time.sleep(POLL_INTERVAL)
+        finally:
+            _server_running = False
+            try:
+                queue.close()
+            except OSError as exc:
+                log("Cannot remove readiness file: " + str(exc))
+            log("poll_loop stopped")
 
 
 # ---------------------------------------------------------------------------
@@ -961,11 +1126,11 @@ def run_blocking(duration_seconds=600):
     gets the GIL and silently stops serving requests.
 
     This runs the loop inline instead. CLO's UI is unresponsive for the
-    duration, which is acceptable for an automated batch, and the loop always
-    returns after `duration_seconds` so CLO cannot be wedged permanently.
+    duration. The deadline and stop requests are checked BETWEEN commands;
+    they cannot interrupt a native call or dismiss a modal dialog.
     """
     global _server_running, _deadline
-    _deadline = time.time() + duration_seconds
+    _deadline = time.monotonic() + duration_seconds
     _server_running = True
     log("run_blocking for %ss (UI will be unresponsive)" % duration_seconds)
     try:

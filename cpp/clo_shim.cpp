@@ -35,7 +35,7 @@ using Marvelous::ImportExportOption;
 namespace {
 
 // Join result paths into caller-provided storage. Returns the number of paths,
-// or -1 if the buffer was too small (caller can retry with a bigger one).
+// or -1 if the buffer was too small. The export already ran; do not replay it.
 int writePaths(const std::vector<std::string>& paths, char* out, int outLen) {
     if (!out || outLen <= 0) return static_cast<int>(paths.size());
     std::string joined;
@@ -68,7 +68,7 @@ int clo_shim_ready() {
     return (EXPORT_API != nullptr && UTILITY_API != nullptr) ? 1 : 0;
 }
 
-int clo_shim_abi_version() { return 1; }
+int clo_shim_abi_version() { return 2; }
 
 // ------------------------------------------------------- ImportExportOption
 
@@ -172,6 +172,20 @@ int clo_export_techpack(const char* path, void* h) {
     const ExportTechpackOption& o = h ? *tpOpts(h) : local;
     EXPORT_API->ExportTechPack(path ? path : "", o);
     return 0;
+}
+
+// AVT needs explicit add mode. ImportFile(path) may replace the project and
+// may return true even when its save/discard prompt is cancelled.
+int clo_import_avatar(const char* path) {
+    if (IMPORT_API == nullptr) return -2;
+    try {
+        ImportExportOption options;
+        options.bAdd = true;
+        options.bMoveGarment = false;
+        return IMPORT_API->ImportAvatar(path ? path : "", options) ? 1 : 0;
+    } catch (...) {
+        return -3;  // Do not let a C++ exception cross the ctypes boundary.
+    }
 }
 
 }  // extern "C"

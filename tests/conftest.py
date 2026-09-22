@@ -1,130 +1,40 @@
-"""Test fixtures: mock CLO3D file-based server for unit testing."""
-
-import json
-import os
-import tempfile
+"""Run the production bridge loop with fake CLO APIs; no duplicate IPC server."""
+import importlib.util
+from pathlib import Path
+import sys
 import threading
 import time
+import types
+
 import pytest
 
-
-class MockCLO3DServer:
-    """Minimal mock of the CLO3D plugin file-based server.
-
-    Polls for request.json in a temp directory, processes commands
-    using built-in handlers, and writes response.json.
-    """
-
-    def __init__(self):
-        self.comm_dir = tempfile.mkdtemp(prefix="clo3d_mcp_test_")
-        self.request_file = os.path.join(self.comm_dir, "request.json")
-        self.response_file = os.path.join(self.comm_dir, "response.json")
-        self._thread = None
-        self._running = False
-        self._handlers = {
-            "ping": lambda p: {"pong": True, "in_clo3d": False},
-            "get_project_info": lambda p: {
-                "project_name": "TestProject",
-                "project_path": "/tmp/test.zprj",
-                "clo_version": "7.0.0",
-                "pattern_count": 5,
-                "fabric_count": 3,
-                "colorway_count": 2,
-            },
-            "get_pattern_count": lambda p: {"count": 5},
-            "get_pattern_list": lambda p: {
-                "patterns": [
-                    {"index": 0, "name": "Front Bodice"},
-                    {"index": 1, "name": "Back Bodice"},
-                    {"index": 2, "name": "Sleeve Left"},
-                    {"index": 3, "name": "Sleeve Right"},
-                    {"index": 4, "name": "Collar"},
-                ],
-                "count": 5,
-            },
-            "get_colorways": lambda p: {
-                "colorways": [
-                    {"index": 0, "name": "Default", "current": True},
-                    {"index": 1, "name": "Navy", "current": False},
-                ],
-                "count": 2,
-                "current_index": 0,
-            },
-            "simulate": lambda p: {"simulated": True, "steps": p.get("steps", 100)},
-            "export_obj": lambda p: {
-                "exported": True,
-                "file_path": p.get("file_path", "/tmp/out.obj"),
-                "format": "obj",
-            },
-        }
-
-    def start(self):
-        self._running = True
-        self._thread = threading.Thread(target=self._loop, daemon=True)
-        self._thread.start()
-
-    def stop(self):
-        self._running = False
-        if self._thread:
-            self._thread.join(timeout=3)
-        # Clean up temp dir
-        for f in [self.request_file, self.response_file]:
-            if os.path.exists(f):
-                try:
-                    os.remove(f)
-                except OSError:
-                    pass
-        try:
-            os.rmdir(self.comm_dir)
-        except OSError:
-            pass
-
-    def _loop(self):
-        while self._running:
-            try:
-                if os.path.exists(self.request_file):
-                    with open(self.request_file, "r") as f:
-                        data = f.read()
-
-                    try:
-                        os.remove(self.request_file)
-                    except OSError:
-                        pass
-
-                    if data.strip():
-                        request = json.loads(data)
-                        req_id = request.get("id")
-                        cmd_type = request.get("type")
-                        params = request.get("params", {})
-
-                        handler = self._handlers.get(cmd_type)
-                        if handler:
-                            result = handler(params)
-                            resp = {"id": req_id, "status": "success", "result": result}
-                        else:
-                            resp = {
-                                "id": req_id,
-                                "status": "error",
-                                "message": f"Unknown command: {cmd_type}",
-                            }
-
-                        tmp = self.response_file + ".tmp"
-                        with open(tmp, "w") as f:
-                            f.write(json.dumps(resp))
-                        if os.path.exists(self.response_file):
-                            os.remove(self.response_file)
-                        os.rename(tmp, self.response_file)
-
-            except Exception as e:
-                print(f"[MockServer] Error: {e}")
-
-            time.sleep(0.02)
+from clo3d_mcp.connection import CLO3DConnection
 
 
 @pytest.fixture
-def mock_server():
-    """Start a mock CLO3D file server and yield it. Stops on teardown."""
-    server = MockCLO3DServer()
-    server.start()
-    yield server
-    server.stop()
+def plugin(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLO3D_MCP_DIR", str(tmp_path))
+    for name in ("export_api", "fabric_api", "import_api", "pattern_api", "utility_api"):
+        monkeypatch.setitem(sys.modules, name, types.SimpleNamespace())
+    path = Path(__file__).resolve().parents[1] / "plugin/clo3d_mcp_plugin.py"
+    spec = importlib.util.spec_from_file_location("clo3d_mcp_plugin", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.setattr(module, "_shim", lambda: None)
+    return module
+
+
+@pytest.fixture
+def bridge(plugin):
+    plugin._server_running = True
+    thread = threading.Thread(target=plugin.poll_loop, daemon=True)
+    thread.start()
+    connection = CLO3DConnection(plugin.COMM_DIR)
+    deadline = time.monotonic() + 2
+    while not connection.connected and time.monotonic() < deadline:
+        time.sleep(.01)
+    assert connection.connected
+    yield plugin, connection
+    plugin._server_running = False
+    thread.join(3)
+    assert not thread.is_alive()
