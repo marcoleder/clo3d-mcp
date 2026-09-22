@@ -13,7 +13,9 @@ Your AI assistant  <-->  MCP Server  <-->  CLO3D Plugin  <-->  CLO3D
 
 **Verification status (2026-09-22):** all **48 tools** passed the live suite on
 CLO 2026.1.224 / macOS arm64: **52 calls, zero failures**, including avatar import
-and turntable images. The offline suite has **42 passing tests**. See the
+and turntable images. The offline suite has **95 passing tests**. The
+[review follow-up](docs/review-followup-2026-09-22.md) adds cancelled-open gates,
+partial-import retry protection and records a second passing live run. See the
 [live validation report](docs/live-validation-2026-09-22.md) for artifacts,
 concurrent-client checks and limits, and the [original audit](docs/correctness-audit-2026-09-22.md)
 for the problems that prompted these fixes. Windows remains untested.
@@ -299,7 +301,7 @@ sentinel between commands. Neither can release CLO while an API call is blocked.
 
 | | macOS (arm64) | Windows |
 |---|---|---|
-| MCP server + 48 tools | 48/48 live tools; 42 offline tests | untested |
+| MCP server + 48 tools | 48/48 live tools; 95 offline tests | untested |
 | Menu-item bridge | protocol 2 and stop/restart tested | untested |
 | Script Editor bridge | ❌ thread starves | unverified |
 | Native shim | ABI 2 build/load, exports and AVT tested | MSVC configured; build/load untested |

@@ -40,6 +40,11 @@ def new_project() -> dict:
 def open_file(file_path: str) -> dict:
     """Open a file in CLO3D. Supports .zprj, .zpac, .avt, .obj, .fbx formats.
 
+    A .zprj open verifies the active project path. An already active path is
+    an explicit no-op (already_active=True), preserving unsaved edits. Avatar
+    and fabric files use dedicated import handlers. An unverifiable import
+    blocks further mutations until a distinct .zprj backup is opened; do not retry.
+
     Args:
         file_path: Absolute path to the file to open.
     """
@@ -339,6 +344,9 @@ def export_thumbnail(file_path: str) -> dict:
 def export_snapshot(file_path: str) -> dict:
     """Export multi-view snapshot images of the 3D garment.
 
+    Returns file_paths as a flat list of verified, nonempty files. The legacy
+    file_path key preserves CLO's original result (string or nested path list).
+
     Args:
         file_path: Absolute path (directory or base name) for snapshot images.
     """
@@ -394,6 +402,11 @@ def export_tech_pack(file_path: str, options: dict | None = None) -> dict:
 @mcp.tool()
 def import_file(file_path: str) -> dict:
     """Import a file into CLO3D. Auto-detects type from extension (.zprj, .zpac, .obj, .fbx, .avt, etc.).
+
+    Uses the same verification and already-active no-op behavior as open_file.
+    Nonproject imports must change observable scene state; uncertain outcomes
+    block further mutations. AVT requires native shim ABI 2; there is no generic
+    ImportFile fallback because it can replace the garment.
 
     Args:
         file_path: Absolute path to the file to import.
@@ -497,6 +510,10 @@ def show_hide_avatar(show: bool = True) -> dict:
 @mcp.tool()
 def import_avatar(file_path: str, apf_path: str = "") -> dict:
     """Import an avatar into the current project.
+
+    Verifies avatar count growth and unchanged garment names/count and project
+    path. A failed postcondition may leave an added avatar: it is not rolled
+    back. Further mutations are blocked until a distinct .zprj backup is loaded.
 
     Args:
         file_path: Absolute path to the avatar file (.avt or .avac).

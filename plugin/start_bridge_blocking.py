@@ -40,7 +40,7 @@ def _retire_previous_instances():
 retired = _retire_previous_instances()
 # Reload pure Python code on a menu restart. A replaced native dylib may still
 # require restarting CLO because the OS caches loaded library images.
-for name in ("clo_shim", "clo3d_mcp.ipc"):
+for name in ("clo_shim", "clo3d_mcp.ipc", "clo3d_mcp.contracts"):
     sys.modules.pop(name, None)
 
 import clo3d_mcp_plugin as bridge  # noqa: E402  (must follow the cleanup above)

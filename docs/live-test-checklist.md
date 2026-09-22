@@ -5,6 +5,8 @@
 behavior. See the [live validation report](live-validation-2026-09-22.md).
 This checklist remains the procedure for subsequent runs; Windows and AVAC/APF
 fixtures still require separate validation.
+The [follow-up review](review-followup-2026-09-22.md) documents the additional
+project-identity gates, uncertain-outcome handling and regression tests.
 
 Running the harness without `--run-live` only prints preparation instructions;
 it does not start an MCP process, contact the bridge, launch CLO or click its UI.
@@ -41,13 +43,19 @@ uv run python tools/live_test.py /absolute/path/garment.zprj --run-live
 The harness discovers the tool list, exercises the two preview tools and all
 export tools, verifies API failure flags, checks selected state postconditions
 and output artifacts, and writes `results.json` in its printed scratch folder.
+It independently reads back the active project path before editing the test
+copy, and verifies the restored path and baseline scene identities/counts.
 Missing coverage or a failed check makes the exit status nonzero. It uses a real
 stdio MCP server. Tests are not a proof of visual fidelity or every tool option.
 
-After a timeout, do not repeat the mutation. The harness stops further mutations
+After a timeout or uncertain outcome, do not repeat the mutation. The harness stops further mutations
 and requests bridge shutdown between commands, but cannot interrupt native code.
 Inspect CLO and restore its printed `original-scene.zprj` manually if necessary.
 A crash, forced termination or blocked dialog can also prevent automatic restore.
+If the bridge reports `scene_review_required`, inspect the scene and use
+`open_file` to load a distinct saved `.zprj` backup. Only verified recovery
+clears the persistent mutation block. Opening the already active path is a
+no-op and cannot resolve the block.
 
 ## Acceptance and remaining investigations
 

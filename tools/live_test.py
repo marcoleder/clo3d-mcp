@@ -20,6 +20,7 @@ import time
 
 from live_validation import validate_result
 from clo3d_mcp.ipc import comm_directory
+from clo3d_mcp.contracts import same_project_path
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 SERVER_BIN = REPO / ".venv" / ("Scripts/clo3d-mcp.exe" if os.name == "nt" else "bin/clo3d-mcp")
@@ -108,6 +109,35 @@ def _release_bridge():
 ACTIVE = {}
 
 
+def verify_active_project(server, expected):
+    """Independent safety gate, including when talking to an older bridge."""
+    ok, info = server.call("get_project_info")
+    actual = info.get("project_path") if ok and isinstance(info, dict) else None
+    if not same_project_path(actual, expected):
+        ACTIVE["uncertain"] = True
+        raise IndeterminateCommand(
+            f"Project identity check failed: expected {expected}, got {actual}. "
+            "No further mutations or automatic restoration will be attempted.")
+
+
+def scene_state(server):
+    """Read stable identities/counts for restoration checks, excluding save paths."""
+    state = {}
+    for tool in ("get_pattern_list", "get_fabric_list", "get_colorways", "get_avatars"):
+        ok, value = server.call(tool)
+        if not ok:
+            raise IndeterminateCommand("Cannot verify scene state: " + str(value))
+        state[tool] = value
+    return state
+
+
+def verify_restoration(server, backup, expected_state):
+    verify_active_project(server, backup)
+    if scene_state(server) != expected_state:
+        ACTIVE["uncertain"] = True
+        raise IndeterminateCommand("Restored scene identities/counts do not match the backup baseline")
+
+
 def exercise():
     positional = [a for a in sys.argv[1:] if not a.startswith("--")]
     src = pathlib.Path(positional[0] if positional else REPO / "test.zprj")
@@ -156,10 +186,14 @@ def exercise():
                 if not patterns_ok:
                     raise ValueError("Cannot read garment before avatar import")
             ok, payload = box["srv"].call(tool, args, timeout)
+            if ok and tool in ("open_file", "import_file") and pathlib.Path(args["file_path"]).suffix.lower() == ".zprj":
+                verify_active_project(box["srv"], args["file_path"])
+            if ok and label == "restore":
+                verify_restoration(box["srv"], ACTIVE["backup"], ACTIVE["original_state"])
             if ok and tool == "import_avatar":
                 patterns_ok, patterns_after = box["srv"].call("get_pattern_list")
                 if not patterns_ok or patterns_before != patterns_after:
-                    raise ValueError("Avatar import changed the garment patterns")
+                    raise IndeterminateCommand("Avatar import changed the garment patterns; do not retry")
             if ok and check:
                 after_ok, after = box["srv"].call(check[0])
                 delta = after.get("count", 0) - before["count"] if after_ok else 0
@@ -178,6 +212,8 @@ def exercise():
             ok, payload = False, "Postcondition failed: " + str(exc)
         except (queue.Empty, IndeterminateCommand) as exc:
             ACTIVE["uncertain"] = True
+            results.append((tool, False, time.time() - t0, str(exc), note))
+            (scratch / "results.json").write_text(json.dumps(results, indent=2))
             raise IndeterminateCommand(f"{tool} did not finish with a known outcome: {exc}") from exc
         dt = time.time() - t0
         results.append((tool, ok, dt, payload, note))
@@ -222,6 +258,7 @@ def exercise():
     ACTIVE["connected"] = True
     box["srv"] = srv
     all_tools = {t["name"] for t in srv._rpc("tools/list", {})["result"]["tools"]}
+    ACTIVE["original_state"] = scene_state(srv)
     backup = scratch / "original-scene.zprj"
     ok, payload = run("backup", "save_project", {"file_path": str(backup)})
     if not ok:
@@ -398,6 +435,8 @@ def main():
                     status = 1
                 elif ACTIVE.get("backup"):
                     ok, payload = srv.call("open_file", {"file_path": ACTIVE["backup"]})
+                    if ok:
+                        verify_restoration(srv, ACTIVE["backup"], ACTIVE["original_state"])
                     print("Scene restoration:", "ok" if ok else payload, flush=True)
                     if not ok:
                         status = 1

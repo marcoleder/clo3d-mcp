@@ -16,6 +16,10 @@ class CLO3DConnectionError(Exception):
     pass
 
 
+class CLO3DOperationUncertain(CLO3DConnectionError):
+    """A native mutation may have applied; callers must not retry it blindly."""
+
+
 class CLO3DConnection:
     def __init__(self, comm_dir=None):
         self.comm_dir = str(comm_dir or comm_directory())
@@ -73,6 +77,10 @@ class CLO3DConnection:
                 response = read_json(response_path)
                 if isinstance(response, dict) and response.get("id") == request_id:
                     if response.get("status") == "error":
+                        if response.get("outcome") == "unknown":
+                            raise CLO3DOperationUncertain(
+                                "CLO3D operation outcome is unknown; do not retry. "
+                                + str(response.get("message")))
                         raise CLO3DConnectionError("CLO3D error: " + str(response.get("message")))
                     if response.get("status") != "success":
                         raise CLO3DConnectionError("Invalid CLO3D response status; command was not retried")

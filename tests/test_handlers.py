@@ -21,10 +21,13 @@ def test_failed_simulation_is_an_error(plugin):
     assert response["status"] == "error"
 
 
-def test_false_import_result_is_an_error(plugin):
+def test_false_import_result_is_an_error(plugin, tmp_path):
+    source = tmp_path / "source.zprj"
+    source.write_text("fixture")
+    plugin.utility_api.GetProjectFilePath = lambda: str(tmp_path / "original.zprj")
     plugin.import_api.ImportFile = lambda path: False
     response = json.loads(plugin.process_command(json.dumps(
-        {"id": "test", "type": "import_file", "params": {"file_path": "x.zprj"}})))
+        {"id": "test", "type": "import_file", "params": {"file_path": str(source)}})))
     assert response["status"] == "error"
 
 
@@ -35,11 +38,17 @@ def test_avatar_routes_by_format_and_rejects_unsupported_pose_first(plugin, monk
         calls.append(("avt", path))
         count[0] += 1
         return True
-    monkeypatch.setattr(plugin, "_shim", lambda: SimpleNamespace(import_avatar=add_avatar))
+    monkeypatch.setattr(plugin, "_shim", lambda: SimpleNamespace(abi=2, import_avatar=add_avatar))
     plugin.export_api.GetAvatarCount = lambda: count[0]
     plugin.pattern_api.GetPatternCount = lambda: 14
+    plugin.pattern_api.GetPatternPieceName = lambda index: "pattern-" + str(index)
+    plugin.utility_api.GetProjectFilePath = lambda: "original.zprj"
     plugin.import_api.ImportFile = lambda path: pytest.fail("must not replace the garment")
-    plugin.import_api.ImportAVAC = lambda *args: calls.append(("avac", *args)) or True
+    def avac(*args):
+        calls.append(("avac", *args))
+        count[0] += 1
+        return True
+    plugin.import_api.ImportAVAC = avac
     assert plugin.handle_import_avatar({"file_path": "avatar.AVT"})["imported"]
     assert plugin.handle_import_avatar({"file_path": "a.avac", "apf_path": "p.apf"})["imported"]
     with pytest.raises(ValueError, match="only for .avac"):
@@ -54,9 +63,11 @@ def test_avatar_without_shim_never_falls_back_to_open_project(plugin):
 
 
 def test_avatar_true_return_without_state_change_is_failure(plugin, monkeypatch):
-    monkeypatch.setattr(plugin, "_shim", lambda: SimpleNamespace(import_avatar=lambda path: True))
+    monkeypatch.setattr(plugin, "_shim", lambda: SimpleNamespace(abi=2, import_avatar=lambda path: True))
     plugin.export_api.GetAvatarCount = lambda: 1
     plugin.pattern_api.GetPatternCount = lambda: 14
+    plugin.pattern_api.GetPatternPieceName = lambda index: "pattern-" + str(index)
+    plugin.utility_api.GetProjectFilePath = lambda: "original.zprj"
     with pytest.raises(RuntimeError, match="did not add"):
         plugin.handle_import_avatar({"file_path": "avatar.avt"})
 
@@ -92,14 +103,45 @@ def test_techpack_void_return_requires_artifact(plugin, tmp_path):
         plugin.handle_export_tech_pack({"file_path": str(tmp_path / "pack.json")})
 
 
-def test_snapshot_flattens_colorway_groups(plugin):
-    plugin.export_api.ExportSnapshot3D = lambda path: [["front.png", "back.png"], ["other.png"]]
-    assert plugin.handle_export_snapshot({"file_path": "snapshot.png"}) == {
-        "exported": True, "file_paths": ["front.png", "back.png", "other.png"]}
+@pytest.mark.parametrize("shape", ["string", "flat", "nested"])
+def test_snapshot_shapes_preserve_legacy_key(plugin, tmp_path, shape):
+    file = tmp_path / "frame.png"
+    file.write_bytes(b"nonempty image fixture")
+    value = str(file)
+    raw = {"string": value, "flat": [value], "nested": [[value]]}[shape]
+    plugin.export_api.ExportSnapshot3D = lambda path: raw
+    result = plugin.handle_export_snapshot({"file_path": str(file)})
+    assert result == {"exported": True, "file_paths": [value], "file_path": raw}
 
 
-def test_fabric_count_and_list_include_unused_fabrics(plugin):
-    plugin.fabric_api.GetFabricCount = lambda current=True: 2 if current else 3
+@pytest.mark.parametrize("result", [[], [[]], [[""]], "", [123], None])
+def test_snapshot_rejects_invalid_path_results(plugin, result):
+    plugin.export_api.ExportSnapshot3D = lambda path: result
+    with pytest.raises(ValueError):
+        plugin.handle_export_snapshot({"file_path": "frame.png"})
+
+
+@pytest.mark.parametrize("kind", ["missing", "empty", "directory"])
+def test_snapshot_requires_nonempty_files(plugin, tmp_path, kind):
+    file = tmp_path / "frame.png"
+    if kind == "empty":
+        file.touch()
+    elif kind == "directory":
+        file.mkdir()
+    plugin.export_api.ExportSnapshot3D = lambda path: [[str(file)]]
+    with pytest.raises(RuntimeError, match="snapshot files"):
+        plugin.handle_export_snapshot({"file_path": str(file)})
+
+
+def test_fabric_count_selects_all_overload_unambiguously(plugin):
+    calls = []
+    def count(selector):
+        calls.append(selector)
+        if type(selector) is bool:
+            return 99  # Would expose accidental selection of the bool overload.
+        return {-2: 3, 0: 2}[selector]
+    plugin.fabric_api.GetFabricCount = count
     plugin.fabric_api.GetFabricName = lambda index: ["used-a", "used-b", "unused"][index]
     assert plugin.handle_get_fabric_count({}) == {"count": 3}
     assert plugin.handle_get_fabric_list({})["fabrics"][-1] == {"index": 2, "name": "unused"}
+    assert all(type(value) is int and value == -2 for value in calls)

@@ -1,5 +1,9 @@
 # Live validation — 2026-09-22
 
+This records the initial validation at `174bbc1`. The
+[review follow-up](review-followup-2026-09-22.md) records the subsequent fixes,
+95-test offline suite and second successful 48-tool live run.
+
 CLO 2026.1.224 on macOS arm64, using protocol 2, real stdio MCP clients, and
 native shim ABI 2. **All 48 tools were exercised: 52 calls passed, zero failed.**
 This verifies the tested inputs and postconditions, not every possible option,

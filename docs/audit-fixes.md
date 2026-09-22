@@ -2,6 +2,8 @@
 
 The [original audit](correctness-audit-2026-09-22.md) describes commit `bbae569`.
 This record separates implemented fixes from checks still requiring CLO.
+The [review follow-up](review-followup-2026-09-22.md) covers the twelve findings
+against `174bbc1`, including cancelled-open protection and partial imports.
 
 | Finding | Resolution | Verification |
 |---|---|---|
@@ -26,10 +28,10 @@ on a menu restart; replacing an already loaded native binary can require a CLO r
 
 ## Offline evidence
 
-- `uv run python -m pytest tests -q`: **42 passed**, including actual MCP stdio
+- `uv run python -m pytest tests -q`: **95 passed**, including actual MCP stdio
   initialization, discovery of 48 tools, successful ping/stop and propagation of a
   fake CLO simulation failure as an MCP error. No real CLO process is used.
-- `uv run python tools/verify_against_clo.py`: **48/48 parameter mappings and 73
+- `uv run python tools/verify_against_clo.py`: **48/48 parameter mappings and 84
   API call sites passed static checks**. This is not proof of live bindings.
 - Clean Release shim build with the local CLO 2026.1.224 macOS SDK succeeded.
 - Live validation: **48/48 tools, 52 successful calls, zero failures**. Four

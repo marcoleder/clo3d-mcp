@@ -6,7 +6,8 @@ import threading
 
 # Shared transport has no third-party dependencies; CLO does not need mcp installed.
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
-from clo3d_mcp.ipc import BridgeQueue, bridge_lock, comm_directory
+from clo3d_mcp.ipc import BridgeQueue, bridge_lock, comm_directory, atomic_json
+from clo3d_mcp.contracts import FAILURE_FLAGS, OperationOutcomeUnknown, export_paths, same_project_path
 
 try:
     import clo_shim as _clo_shim_mod
@@ -138,7 +139,8 @@ _READ_ONLY = {
     "get_pattern_list", "get_pattern_info", "get_pattern_bounding_box",
     "get_arrangement_list", "get_fabric_list", "get_fabric_count",
     "get_fabric_for_pattern", "get_colorways", "get_avatars",
-    "get_avatar_genders", "refresh_view", "set_live_preview",
+    "get_avatar_genders", "get_bounding_box",
+    "refresh_view", "set_live_preview",
     "debug_api", "debug_sig", "debug_modules", "debug_shim",
 }
 
@@ -280,7 +282,7 @@ def handle_get_project_info(params):
     minor = utility_api.GetMinorVersion()
     patch = utility_api.GetPatchVersion()
     pattern_count = pattern_api.GetPatternCount()
-    fabric_count = fabric_api.GetFabricCount(False)
+    fabric_count = fabric_api.GetFabricCount(-2)
     colorway_count = utility_api.GetColorwayCount()
     return {
         "project_name": name,
@@ -297,10 +299,60 @@ def handle_new_project(params):
     return {"created": True}
 
 
+def _scene_signature():
+    """Observable identity, deliberately excluding transient rendering data."""
+    return {
+        "project_path": utility_api.GetProjectFilePath(),
+        "patterns": [pattern_api.GetPatternPieceName(i)
+                     for i in range(pattern_api.GetPatternCount())],
+        "avatars": export_api.GetAvatarCount(),
+        "avatar_names": export_api.GetAvatarNameList(),
+        "fabrics": fabric_api.GetFabricCount(-2),
+        "colorways": utility_api.GetColorwayCount(),
+    }
+
+
+def _import_file_checked(file_path):
+    if not os.path.isfile(file_path):
+        raise FileNotFoundError(file_path)
+    extension = os.path.splitext(file_path)[1].lower()
+    # Generic ImportFile may replace the garment. Always use the dedicated
+    # verified add route for avatar/fabric imports.
+    if extension in (".avt", ".avac"):
+        return handle_import_avatar({"file_path": file_path})
+    if extension in (".zfab", ".jfab"):
+        return handle_import_fabric({"file_path": file_path})
+    before = utility_api.GetProjectFilePath()
+    if extension == ".zprj" and same_project_path(before, file_path):
+        if _review_required():
+            raise RuntimeError("Restore a distinct .zprj backup to resolve the uncertain scene; "
+                               "a reload of the active path cannot be verified")
+        # Opening an already active project is an explicit no-op; it must not
+        # pretend to reload unsaved edits via an unverifiable ImportFile call.
+        return {"verified": True, "already_active": True}
+    signature = _scene_signature() if extension != ".zprj" else None
+    camera = utility_api.GetCustomViewInformation() if extension == ".zcmr" else None
+    try:
+        result = import_api.ImportFile(file_path)
+        if not result:
+            raise RuntimeError("ImportFile returned false")
+        if extension == ".zprj":
+            actual = utility_api.GetProjectFilePath()
+            if not same_project_path(actual, file_path):
+                raise RuntimeError("Requested project is not active after ImportFile: " + str(actual))
+            _clear_review()
+        elif (_scene_signature() == signature
+              and (extension != ".zcmr" or utility_api.GetCustomViewInformation() == camera)):
+            raise RuntimeError("ImportFile returned true without an observable scene change")
+    except Exception as exc:
+        raise OperationOutcomeUnknown(str(exc)) from exc
+    return {"verified": True, "already_active": False}
+
+
 def handle_open_file(params):
     file_path = params["file_path"]
-    result = import_api.ImportFile(file_path)
-    return {"opened": result, "file_path": file_path}
+    details = _import_file_checked(file_path)
+    return dict(details, opened=True, file_path=file_path)
 
 
 def handle_save_file(params):
@@ -410,21 +462,33 @@ def handle_get_arrangement_list(params):
 # -- Fabric --
 
 def handle_get_fabric_count(params):
-    count = fabric_api.GetFabricCount(False)
+    count = fabric_api.GetFabricCount(-2)
     return {"count": count}
 
 
 def handle_get_fabric_list(params):
-    count = fabric_api.GetFabricCount(False)
+    count = fabric_api.GetFabricCount(-2)
     fabrics = []
     for i in range(count):
         fabrics.append({"index": i, "name": fabric_api.GetFabricName(i)})
     return {"fabrics": fabrics, "count": count}
 
 
+def _add_fabric(file_path):
+    before = fabric_api.GetFabricCount(-2)
+    try:
+        index = fabric_api.AddFabric(file_path)
+        after = fabric_api.GetFabricCount(-2)
+        if type(index) is not int or not 0 <= index < after or after <= before:
+            raise RuntimeError("AddFabric did not return a valid new fabric")
+        return index
+    except Exception as exc:
+        raise OperationOutcomeUnknown(str(exc)) from exc
+
+
 def handle_add_fabric(params):
     file_path = params["file_path"]
-    index = fabric_api.AddFabric(file_path)
+    index = _add_fabric(file_path)
     return {"added": True, "fabric_index": index, "file_path": file_path}
 
 
@@ -448,7 +512,8 @@ def handle_set_fabric_color(params):
     g_f = g / 255.0
     b_f = b / 255.0
     a_f = a / 255.0
-    fabric_api.SetFabricPBRMaterialBaseColor(fabric_index, material_face, r_f, g_f, b_f, a_f)
+    if not fabric_api.SetFabricPBRMaterialBaseColor(fabric_index, material_face, r_f, g_f, b_f, a_f):
+        raise RuntimeError("SetFabricPBRMaterialBaseColor returned false")
     return {"set": True, "fabric_index": fabric_index, "color": [r, g, b, a]}
 
 
@@ -609,8 +674,11 @@ def handle_export_snapshot(params):
     file_path = params["file_path"]
     # CLO returns vector<vector<string>> grouped by colorway/view.
     result = export_api.ExportSnapshot3D(file_path)
-    paths = [path for group in result for path in group] if result else []
-    return {"exported": bool(paths), "file_paths": paths}
+    paths = export_paths(result)
+    if any(not os.path.isfile(path) or os.path.getsize(path) == 0 for path in paths):
+        raise RuntimeError("CLO did not produce all snapshot files")
+    # Preserve the historical SDK-shaped key while providing normalized paths.
+    return {"exported": True, "file_paths": paths, "file_path": result}
 
 
 def handle_export_turntable(params):
@@ -683,37 +751,43 @@ def handle_export_tech_pack(params):
 
 def handle_import_file(params):
     file_path = params["file_path"]
-    result = import_api.ImportFile(file_path)
-    return {"imported": result, "file_path": file_path}
+    details = _import_file_checked(file_path)
+    return dict(details, imported=True, file_path=file_path)
 
 
 def handle_import_avatar(params):
     file_path = params["file_path"]
     apf_path = params.get("apf_path", "")
     extension = os.path.splitext(file_path)[1].lower()
-    if extension == ".avac":
-        result = import_api.ImportAVAC(file_path, apf_path)
-    elif extension == ".avt":
+    if extension not in (".avt", ".avac"):
+        raise ValueError("Avatar file must be .avt or .avac")
+    sh = None
+    if extension == ".avt":
         if apf_path:
             raise ValueError("apf_path is supported only for .avac; import the .avt without it")
         sh = _shim()
-        if sh is None:
-            raise RuntimeError("AVT import requires the updated native shim; build cpp/ first")
-        before = export_api.GetAvatarCount()
-        pattern_count = pattern_api.GetPatternCount()
-        result = sh.import_avatar(file_path)
+        if sh is None or sh.abi < 2:
+            raise RuntimeError("AVT import requires the updated native shim (ABI 2); build cpp/ first")
+    before = export_api.GetAvatarCount()
+    patterns = handle_get_pattern_list({})
+    project = utility_api.GetProjectFilePath()
+    try:
+        result = (sh.import_avatar(file_path) if sh is not None
+                  else import_api.ImportAVAC(file_path, apf_path))
         if not result or export_api.GetAvatarCount() <= before:
             raise RuntimeError("Avatar import did not add an avatar")
-        if pattern_api.GetPatternCount() != pattern_count:
-            raise RuntimeError("Avatar import unexpectedly changed the garment pattern count")
-    else:
-        raise ValueError("Avatar file must be .avt or .avac")
-    return {"imported": result, "file_path": file_path}
+        if handle_get_pattern_list({}) != patterns or utility_api.GetProjectFilePath() != project:
+            raise RuntimeError("Avatar import unexpectedly changed the garment or project")
+    except Exception as exc:
+        # No reliable avatar-delete/rollback API is available. Mark the outcome
+        # as uncertain and block further mutations until a verified recovery.
+        raise OperationOutcomeUnknown(str(exc)) from exc
+    return {"imported": True, "file_path": file_path}
 
 
 def handle_import_fabric(params):
     file_path = params["file_path"]
-    index = fabric_api.AddFabric(file_path)
+    index = _add_fabric(file_path)
     return {"imported": True, "fabric_index": index, "file_path": file_path}
 
 
@@ -872,6 +946,25 @@ HANDLERS = {
 # File-based communication
 # ---------------------------------------------------------------------------
 
+def _review_file():
+    return os.path.join(COMM_DIR, "scene-review-required.json")
+
+
+def _review_required():
+    # Existence is fail-closed even if an interrupted write/corruption lost details.
+    return os.path.exists(_review_file())
+
+
+def _clear_review():
+    if _review_required():
+        os.remove(_review_file())
+
+
+def _is_recovery(command, params):
+    return command in ("open_file", "import_file") and os.path.splitext(
+        str(params.get("file_path", "")))[1].lower() == ".zprj"
+
+
 def process_command(data):
     """Parse and execute a single JSON command."""
     try:
@@ -896,8 +989,11 @@ def process_command(data):
         })
 
     try:
+        if _review_required() and cmd_type not in _READ_ONLY and not _is_recovery(cmd_type, params):
+            raise OperationOutcomeUnknown("A previous mutation needs scene review. "
+                                          "Inspect CLO and restore a distinct .zprj backup before more mutations")
         result = handler(params)
-        for flag in ("opened", "saved", "imported", "exported", "simulated", "copied", "created", "deleted", "added", "replaced", "assigned"):
+        for flag in FAILURE_FLAGS:
             if result.get(flag) is False:
                 raise RuntimeError(cmd_type + " reported " + flag + "=false")
         # With live preview on, force the viewport to redraw after anything
@@ -909,11 +1005,13 @@ def process_command(data):
                 pass          # a preview failure must never fail the command
         return json.dumps({"id": req_id, "status": "success", "result": result})
     except Exception as e:
-        return json.dumps({
-            "id": req_id,
-            "status": "error",
-            "message": str(type(e).__name__) + ": " + str(e),
-        })
+        response = {"id": req_id, "status": "error",
+                    "message": str(type(e).__name__) + ": " + str(e)}
+        if isinstance(e, OperationOutcomeUnknown):
+            response.update(outcome="unknown", retry_safe=False, scene_review_required=True)
+            if not _review_required():
+                atomic_json(_review_file(), {"command": cmd_type, "id": req_id, "reason": str(e)})
+        return json.dumps(response)
 
 
 def poll_loop():

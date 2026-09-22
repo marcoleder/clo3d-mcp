@@ -92,3 +92,57 @@ def test_server_marks_timeout_as_unknown_outcome():
         {"type": "text", "text": "Timed out waiting for CLO3D; not retried"}]}}
     with pytest.raises(IndeterminateCommand):
         server.call("copy_pattern")
+
+
+def test_cancelled_open_aborts_real_harness_before_scene_edits(monkeypatch, tmp_path):
+    """An old bridge can claim success; the harness must independently check."""
+    import live_test
+    calls = []
+    src = tmp_path / "source.zprj"
+    src.write_text("garment fixture")
+    class FakeServer:
+        def call(self, name, args=None, timeout=240):
+            calls.append(name)
+            if name == "get_project_info":
+                return True, {"project_path": "original-user-scene.zprj"}
+            if name in ("ping", "save_project", "open_file"):
+                return True, {}
+            if name in ("get_pattern_list", "get_fabric_list", "get_colorways", "get_avatars"):
+                return True, {"count": 1}
+            pytest.fail("Scene edited after cancelled open: " + name)
+        def _rpc(self, *args):
+            return {"result": {"tools": []}}
+        def close(self):
+            pass
+    monkeypatch.setattr(live_test, "Server", FakeServer)
+    monkeypatch.setattr(live_test, "SERVER_BIN", src)
+    monkeypatch.setattr(live_test, "_release_bridge", lambda: None)
+    monkeypatch.setattr(sys, "argv", ["live_test.py", str(src), "--run-live"])
+    assert live_test.main() == 1
+    assert live_test.ACTIVE["uncertain"]
+    assert calls.count("open_file") == 1  # No automatic recovery on unknown outcome.
+    results = Path(live_test.ACTIVE["backup"]).parent / "results.json"
+    assert json.loads(results.read_text())[-1][1] is False
+
+
+@pytest.mark.parametrize("wrong_path", [True, False])
+def test_cleanup_does_not_report_cancelled_or_incorrect_restore_as_success(monkeypatch, wrong_path):
+    import live_test
+    calls = []
+    def call(name, args=None, **kwargs):
+        calls.append(name)
+        if name == "get_project_info":
+            return True, {"project_path": "test-copy.zprj" if wrong_path else "backup.zprj"}
+        return True, {}  # Claimed open success, but state differs from baseline.
+    server = SimpleNamespace(call=call, close=lambda: None)
+    def partial():
+        live_test.ACTIVE.update(server=server, connected=True, backup="backup.zprj",
+                               original_state={"get_pattern_list": {"count": 7}})
+        return 0
+    monkeypatch.setattr(sys, "argv", ["live_test.py", "--run-live"])
+    monkeypatch.setattr(live_test, "exercise", partial)
+    monkeypatch.setattr(live_test, "_release_bridge", lambda: None)
+    assert live_test.main() == 1
+    assert live_test.ACTIVE["uncertain"]
+    assert calls.count("open_file") == 1
+    assert "stop_bridge" not in calls
