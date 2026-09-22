@@ -35,7 +35,7 @@ using Marvelous::ImportExportOption;
 namespace {
 
 // Join result paths into caller-provided storage. Returns the number of paths,
-// or -1 if the buffer was too small (caller can retry with a bigger one).
+// or -1 if the buffer was too small. The export already ran; do not replay it.
 int writePaths(const std::vector<std::string>& paths, char* out, int outLen) {
     if (!out || outLen <= 0) return static_cast<int>(paths.size());
     std::string joined;

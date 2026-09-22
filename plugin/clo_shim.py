@@ -113,20 +113,23 @@ class CloShim(object):
         h = self.lib.clo_opts_create()
         if not h:
             raise MemoryError("clo_opts_create failed")
-        rejected = []
-        for k, v in (options or {}).items():
-            key = k.encode("utf-8")
-            if k in self._BOOLS:
-                ok = self.lib.clo_opts_set_bool(h, key, 1 if v else 0)
-            elif k in self._INTS:
-                ok = self.lib.clo_opts_set_int(h, key, int(v))
-            elif k in self._FLOATS:
-                ok = self.lib.clo_opts_set_float(h, key, float(v))
-            else:
-                ok = 0
-            if not ok:
-                rejected.append(k)
-        return h, rejected
+        try:
+            for k, v in (options or {}).items():
+                key = k.encode("utf-8")
+                if k in self._BOOLS and isinstance(v, bool):
+                    ok = self.lib.clo_opts_set_bool(h, key, int(v))
+                elif k in self._INTS and type(v) is int:
+                    ok = self.lib.clo_opts_set_int(h, key, v)
+                elif k in self._FLOATS and type(v) in (int, float):
+                    ok = self.lib.clo_opts_set_float(h, key, float(v))
+                else:
+                    ok = 0
+                if not ok:
+                    raise ValueError("Unsupported export option or value: " + k)
+            return h, []
+        except Exception:
+            self.lib.clo_opts_free(h)
+            raise
 
     # ---------------------------------------------------------------- exports
 
@@ -169,8 +172,8 @@ class CloShim(object):
         rejected = []
         try:
             for k, v in (options or {}).items():
-                if not self.lib.clo_tp_opts_set_bool(h, k.encode("utf-8"), 1 if v else 0):
-                    rejected.append(k)
+                if not isinstance(v, bool) or not self.lib.clo_tp_opts_set_bool(h, k.encode("utf-8"), int(v)):
+                    raise ValueError("Unsupported tech pack option or value: " + k)
             rc = self.lib.clo_export_techpack(file_path.encode("utf-8"), h)
         finally:
             self.lib.clo_tp_opts_free(h)

@@ -1,18 +1,12 @@
 #!/usr/bin/env python3
-"""Exercise all 45 MCP tools against a real garment inside a running CLO3D.
+"""Exercise the discovered MCP tools against a copy of a real CLO garment.
 
-    python3 tools/live_test.py [path/to/garment.zprj]
-
-Requires CLO3D running with plugin/clo3d_mcp_plugin.py executing in the
-Script Editor. Run `ping` first — if that fails nothing else can work.
-
-Safety
-  * the garment is copied to a scratch dir; your original is never written to
-  * every export goes to that scratch dir
-  * destructive tools (delete_*) only ever touch objects this script created
-  * new_project runs last, because it discards the open document
+Run with the bridge active and confirm modal dialogs manually or with the
+macOS dialog watcher. The harness saves the current scene to a scratch backup
+before replacing it, restores that backup, then explicitly stops the bridge.
+Saving/restoring changes CLO's active project path to the backup. A crash or
+blocked native call can prevent restoration; the backup is retained on disk.
 """
-import atexit
 import json
 import os
 import pathlib
@@ -24,10 +18,17 @@ import tempfile
 import threading
 import time
 
+from live_validation import validate_result
+from clo3d_mcp.ipc import comm_directory
+
 REPO = pathlib.Path(__file__).resolve().parent.parent
-SERVER_BIN = REPO / ".venv" / "bin" / "clo3d-mcp"
-COMM = os.path.expanduser("~/clo3d_mcp")
+SERVER_BIN = REPO / ".venv" / ("Scripts/clo3d-mcp.exe" if os.name == "nt" else "bin/clo3d-mcp")
+COMM = comm_directory()
 ASSETS = pathlib.Path.home() / "Documents" / "CLO" / "CLO Assets"
+
+
+class IndeterminateCommand(RuntimeError):
+    """The bridge may still be executing a call; do not queue more mutations."""
 
 
 class Server:
@@ -53,8 +54,9 @@ class Server:
         self.n += 1
         mid = self.n
         self._send({"jsonrpc": "2.0", "id": mid, "method": method, "params": params})
+        deadline = time.monotonic() + timeout
         while True:
-            m = json.loads(self.q.get(timeout=timeout).strip())
+            m = json.loads(self.q.get(timeout=max(.01, deadline - time.monotonic())).strip())
             if m.get("id") == mid:
                 return m
 
@@ -65,14 +67,25 @@ class Server:
         res = r["result"]
         text = "".join(c.get("text", "") for c in res.get("content", []))
         if res.get("isError"):
+            if any(marker in text for marker in (
+                "Timed out waiting for CLO3D", "outcome is unknown", "check its outcome"
+            )):
+                raise IndeterminateCommand(text.strip())
             return False, text.strip()
         try:
-            return True, json.loads(text)
-        except Exception:
-            return True, text.strip()
+            payload = json.loads(text)
+            validate_result(name, payload, args or {})
+            return True, payload
+        except Exception as exc:
+            return False, f"Validation failed: {exc}; response: {text[:200]}"
 
     def close(self):
         self.p.terminate()
+        try:
+            self.p.wait(5)
+        except subprocess.TimeoutExpired:
+            self.p.kill()
+            self.p.wait()
 
 
 def first_asset(subdir, ext):
@@ -85,16 +98,17 @@ def first_asset(subdir, ext):
 
 
 def _release_bridge():
-    """Free CLO's UI. Registered with atexit so a crash or early return in the
-    harness can never leave CLO frozen waiting out its deadline."""
+    """Request stop between commands; cannot interrupt a blocked native call."""
     try:
         open(os.path.join(COMM, "stop"), "w").close()
     except OSError:
         pass
 
 
-def main():
-    atexit.register(_release_bridge)
+ACTIVE = {}
+
+
+def exercise():
     positional = [a for a in sys.argv[1:] if not a.startswith("--")]
     src = pathlib.Path(positional[0] if positional else REPO / "test.zprj")
     if not src.is_file():
@@ -113,18 +127,52 @@ def main():
     print(f"output dir   : {out}\n")
 
     srv = Server()
+    ACTIVE["server"] = srv
     results = []
     state = {}
     box = {}
 
     def run(label, tool, args=None, timeout=240, note=""):
+        count_checks = {
+            "create_pattern": ("get_pattern_count", 1),
+            "copy_pattern": ("get_pattern_count", 1),
+            "delete_pattern": ("get_pattern_count", -1),
+            "add_fabric": ("get_fabric_count", 1),
+            "import_fabric": ("get_fabric_count", 1),
+            "delete_fabric": ("get_fabric_count", -1),
+            "copy_colorway": ("get_colorways", 1),
+            "delete_colorway": ("get_colorways", -1),
+        }
         t0 = time.time()
         try:
+            check = count_checks.get(tool)
+            if check:
+                before_ok, before = box["srv"].call(check[0])
+                if not before_ok:
+                    raise ValueError("Cannot read precondition: " + str(before))
             ok, payload = box["srv"].call(tool, args, timeout)
-        except queue.Empty:
-            ok, payload = False, f"timed out after {timeout}s"
+            if ok and check:
+                after_ok, after = box["srv"].call(check[0])
+                delta = after.get("count", 0) - before["count"] if after_ok else 0
+                # CLO may also duplicate linked/symmetric pieces.
+                if not after_ok or (delta * check[1]) < 1:
+                    raise ValueError(f"{tool}: expected count change {check[1]}, got {delta}")
+            if ok and tool == "set_pattern_name":
+                _, actual = box["srv"].call("get_pattern_info", {"pattern_index": args["pattern_index"]})
+                if actual.get("name") != args["name"]:
+                    raise ValueError("Pattern rename did not persist")
+            if ok and tool == "new_project":
+                _, actual = box["srv"].call("get_pattern_count")
+                if actual.get("count") != 0:
+                    raise ValueError("New project still contains patterns")
+        except (ValueError, KeyError, TypeError) as exc:
+            ok, payload = False, "Postcondition failed: " + str(exc)
+        except (queue.Empty, IndeterminateCommand) as exc:
+            ACTIVE["uncertain"] = True
+            raise IndeterminateCommand(f"{tool} did not finish with a known outcome: {exc}") from exc
         dt = time.time() - t0
-        results.append((tool, ok, dt, payload if not ok else "", note))
+        results.append((tool, ok, dt, payload, note))
+        (scratch / "results.json").write_text(json.dumps(results, indent=2))
         flag = "ok  " if ok else "FAIL"
         summary = "" if ok else f"  <- {str(payload)[:100]}"
         print(f"  {flag} {tool:<26} {dt:6.2f}s {note}{summary}")
@@ -148,27 +196,39 @@ def main():
             break
         if first:
             print(f"  waiting up to {wait_s}s for the bridge — in CLO3D run:")
-            print("    Script > Script Editor > open plugin/clo3d_mcp_plugin.py > Run")
+            print("    Plugins > Plug-in > MCP Bridge (serve)")
             first = False
         srv.close()
         time.sleep(3)
         srv = Server()
+        ACTIVE["server"] = srv
     results.append(("ping", ok, 0.0, "" if ok else payload, ""))
     print(f"  {'ok  ' if ok else 'FAIL'} ping")
     if not ok:
         print("\nThe bridge is not responding. In CLO3D:")
-        print("  Script > Script Editor > open plugin/clo3d_mcp_plugin.py > Run")
-        print("Leave the editor open; it polls in a loop.")
-        srv.close()
+        print("  Plugins > Plug-in > MCP Bridge (serve)")
+        print("Use the blocking menu launcher; see README.md.")
         return 1
 
+    ACTIVE["connected"] = True
     box["srv"] = srv
+    all_tools = {t["name"] for t in srv._rpc("tools/list", {})["result"]["tools"]}
+    backup = scratch / "original-scene.zprj"
+    ok, payload = run("backup", "save_project", {"file_path": str(backup)})
+    if not ok:
+        print("Cannot verify a scene backup; aborting before opening the test garment")
+        return 1
+    ACTIVE["backup"] = str(backup)
 
     # ── 1. open the garment copy ──────────────────────────────────────────
     print("\n[1] project")
-    run("open", "open_file", {"file_path": str(garment)})
+    if not run("open", "open_file", {"file_path": str(garment)})[0]:
+        print("Opening the garment copy failed; aborting mutations")
+        return 1
     run("info", "get_project_info")
     run("garment", "get_garment_info")
+    run("refresh", "refresh_view")
+    run("preview", "set_live_preview", {"enabled": False})
 
     # ── 2. read-only introspection ────────────────────────────────────────
     print("\n[2] read-only introspection")
@@ -235,7 +295,6 @@ def main():
         if ok and isinstance(r, dict) and isinstance(r.get("new_index"), int):
             state["new_colorway"] = r["new_index"]
 
-    run("import-file", "import_file", {"file_path": zfab or str(garment)})
     avt = first_asset("Avatar", ".avt")
     if avt:
         run("import-avatar", "import_avatar", {"file_path": avt, "apf_path": ""}, timeout=300)
@@ -251,22 +310,16 @@ def main():
         timeout=600, note="(modal dialog - needs confirm)")
     run("obj+opt", "export_obj",
         {"file_path": str(out / "g2.obj"), "options": {"bExportAvatar": False}},
-        timeout=600, note="(options unsupported on 2026.1)")
+        timeout=600, note="(native options)")
     run("fbx", "export_fbx", {"file_path": str(out / "g.fbx")})
-    # export_glb/gltf fall back to CLO's *WithDialog* variants, which open a
-    # modal dialog and wait for a human click. That stalls an unattended batch,
-    # so they are opt-in via --with-dialogs.
-    if "--with-dialogs" in sys.argv:
-        run("glb", "export_glb", {"file_path": str(out / "g.glb")}, note="(opens a dialog)")
-        run("gltf", "export_gltf", {"file_path": str(out / "g.gltf")}, note="(opens a dialog)")
-    else:
-        print("  skip export_glb / export_gltf (need a dialog click; pass --with-dialogs)")
+    run("glb", "export_glb", {"file_path": str(out / "g.glb")})
+    run("gltf", "export_gltf", {"file_path": str(out / "g.gltf")})
     run("thumb", "export_thumbnail", {"file_path": str(out / "thumb.png")})
     run("snapshot", "export_snapshot", {"file_path": str(out / "snap.png")})
     run("turntable", "export_turntable",
         {"file_path": str(out / "turn.png"), "number_of_images": 4,
          "width": 512, "height": 512}, timeout=300, note="(4 frames @512)")
-    run("techpack", "export_tech_pack", {"file_path": str(out / "techpack")})
+    run("techpack", "export_tech_pack", {"file_path": str(out / "techpack.json")})
 
     # ── 6. destructive — only objects this run created ────────────────────
     print("\n[6] destructive (only on objects created above)")
@@ -286,35 +339,19 @@ def main():
     # ── 7. save, then new_project last (it discards the document) ─────────
     print("\n[7] save + reset")
     run("save", "save_project", {"file_path": str(out / "saved.zprj")})
-    run("new", "new_project", note="(discards — runs last)")
+    run("new", "new_project", note="(test copy only)")
+    run("import-file", "import_file", {"file_path": str(garment)})
 
-    # release the bridge so CLO's UI comes back without waiting out the deadline
-    try:
-        open(os.path.join(COMM, "stop"), "w").close()
-        print("\n  (sent stop signal — CLO is responsive again)")
-    except OSError:
-        pass
-
-    # ── summary ───────────────────────────────────────────────────────────
-    box["srv"].close()
+    restored, _ = run("restore", "open_file", {"file_path": ACTIVE["backup"]})
+    if restored:
+        ACTIVE.pop("backup")
+        ACTIVE["stopped"] = run("stop", "stop_bridge")[0]
     called = {r[0] for r in results}
     passed = [r for r in results if r[1]]
     failed = [r for r in results if not r[1]]
-    all_tools = {
-        "ping","open_file","get_project_info","get_garment_info","get_pattern_count",
-        "get_pattern_list","get_pattern_info","get_pattern_bounding_box",
-        "get_fabric_for_pattern","get_arrangement_list","get_fabric_count",
-        "get_fabric_list","get_colorways","get_avatars","get_avatar_genders",
-        "set_pattern_name","flip_pattern","set_fabric_color","assign_fabric_to_pattern",
-        "set_current_colorway","set_colorway_name","show_hide_avatar",
-        "set_simulation_quality","simulate","create_pattern","copy_pattern",
-        "import_fabric","add_fabric","replace_fabric","copy_colorway","import_file",
-        "import_avatar","export_obj","export_fbx","export_glb","export_gltf",
-        "export_thumbnail","export_snapshot","export_turntable","export_tech_pack",
-        "delete_pattern","delete_fabric","delete_colorway","save_project","new_project",
-    }
+    (scratch / "results.json").write_text(json.dumps(results, indent=2))
     print("\n" + "=" * 72)
-    print(f"tools exercised : {len(called)}/45")
+    print(f"tools exercised : {len(called)}/{len(all_tools)}")
     print(f"calls passed    : {len(passed)}")
     print(f"calls failed    : {len(failed)}")
     skipped = sorted(all_tools - called)
@@ -327,7 +364,45 @@ def main():
     produced = sorted(p.name for p in out.rglob("*") if p.is_file())
     print(f"\nfiles produced ({len(produced)}): {', '.join(produced[:20]) or 'none'}")
     print(f"scratch dir     : {scratch}")
-    return 1 if failed else 0
+    return 1 if failed or skipped else 0
+
+
+def main():
+    if "--run-live" not in sys.argv:
+        print("Prepared only: no MCP calls or CLO actions were performed.")
+        print("See docs/live-test-checklist.md. When CLO is available, run:")
+        print("  uv run python tools/live_test.py /absolute/garment.zprj --run-live")
+        return 0
+    ACTIVE.clear()
+    status = 1
+    try:
+        status = exercise()
+    except (queue.Empty, IndeterminateCommand) as exc:
+        ACTIVE["uncertain"] = True
+        print("Live run stopped:", exc)
+    finally:
+        srv = ACTIVE.get("server")
+        if srv:
+            try:
+                if ACTIVE.get("uncertain"):
+                    print("Outcome unknown; inspect CLO, then restore manually from:", ACTIVE.get("backup"))
+                    status = 1
+                elif ACTIVE.get("backup"):
+                    ok, payload = srv.call("open_file", {"file_path": ACTIVE["backup"]})
+                    print("Scene restoration:", "ok" if ok else payload, flush=True)
+                    if not ok:
+                        status = 1
+                        print("Restore manually from:", ACTIVE["backup"])
+                if ACTIVE.get("connected") and not ACTIVE.get("stopped") and not ACTIVE.get("uncertain"):
+                    srv.call("stop_bridge", timeout=10)
+            except Exception as exc:
+                status = 1
+                print("Cleanup could not finish:", exc, "backup:", ACTIVE.get("backup"))
+            finally:
+                if ACTIVE.get("connected") and not ACTIVE.get("stopped"):
+                    _release_bridge()
+                srv.close()
+    return status
 
 
 if __name__ == "__main__":

@@ -4,6 +4,10 @@ import sys
 import time
 import threading
 
+# Shared transport has no third-party dependencies; CLO does not need mcp installed.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
+from clo3d_mcp.ipc import BridgeQueue, bridge_lock, comm_directory
+
 try:
     import clo_shim as _clo_shim_mod
 except Exception:            # never let the shim break the bridge
@@ -31,11 +35,7 @@ except ImportError as _e:
     print("[CLO MCP] WARNING: Not running inside CLO3D. API calls will fail.")
 
 # Communication directory
-COMM_DIR = os.environ.get("CLO3D_MCP_DIR") or os.path.join(
-    os.environ.get("TEMP", os.path.expanduser("~")), "clo3d_mcp"
-)
-REQUEST_FILE = os.path.join(COMM_DIR, "request.json")
-RESPONSE_FILE = os.path.join(COMM_DIR, "response.json")
+COMM_DIR = comm_directory()
 POLL_INTERVAL = 0.1
 
 # When CLO runs this from the Plugins menu, print() goes nowhere visible.
@@ -64,6 +64,12 @@ _deadline = None
 # Command handlers
 # ---------------------------------------------------------------------------
 
+def handle_stop_bridge(params):
+    global _server_running
+    _server_running = False
+    return {"stopped": True}
+
+
 def handle_ping(params):
     return {"pong": True, "in_clo3d": IN_CLO3D}
 
@@ -83,9 +89,9 @@ def handle_debug_modules(params):
     """Exhaustive hunt for the option types + full module dumps.
 
     Earlier introspection checked only five modules and reported no classes,
-    but libCloScene.dylib contains "ImportExportOption" followed by every one
-    of its field names - the signature of a pybind11 class registration with
-    def_readwrite. So it is registered somewhere. This looks everywhere.
+    and binary strings include "ImportExportOption" and its field names.
+    Strings alone do not establish Python registration; inspect reachable
+    modules to gather runtime evidence.
     """
     import importlib
 
@@ -128,7 +134,7 @@ def handle_debug_modules(params):
 
 # commands that only read state — never worth a repaint
 _READ_ONLY = {
-    "ping", "get_project_info", "get_garment_info", "get_pattern_count",
+    "ping", "stop_bridge", "get_project_info", "get_garment_info", "get_pattern_count",
     "get_pattern_list", "get_pattern_info", "get_pattern_bounding_box",
     "get_arrangement_list", "get_fabric_list", "get_fabric_count",
     "get_fabric_for_pattern", "get_colorways", "get_avatars",
@@ -358,8 +364,10 @@ def handle_copy_pattern(params):
     index = params["pattern_index"]
     x = params.get("x", 0)
     y = params.get("y", 0)
-    pattern_api.CopyPatternPiecePos(index, x, y)
-    return {"copied": True, "source_index": index, "position": [x, y]}
+    new_index = pattern_api.CopyPatternPieceMove(index, float(x), float(y))
+    if new_index < 0:
+        raise RuntimeError("CopyPatternPieceMove failed")
+    return {"copied": True, "source_index": index, "new_index": new_index, "offset": [x, y]}
 
 
 def handle_delete_pattern(params):
@@ -387,7 +395,10 @@ def handle_create_pattern(params):
         # int in the x/y slots is rejected outright ("incompatible function
         # arguments") rather than promoted. Coerce explicitly.
         point_tuples.append((float(x), float(y), int(vtype)))
+    count_before = pattern_api.GetPatternCount()
     result = pattern_api.CreatePatternWithPoints(point_tuples)
+    if result < 0 or pattern_api.GetPatternCount() <= count_before:
+        raise RuntimeError("CreatePatternWithPoints failed")
     return {"created": True, "point_count": len(point_tuples), "result": result}
 
 
@@ -511,8 +522,9 @@ def _build_export_option(options):
         raise _unsupported("ExportOBJ/FBX/GLB/GLTF")
     opt = ctor()
     for key, val in (options or {}).items():
-        if hasattr(opt, key):
-            setattr(opt, key, val)
+        if not hasattr(opt, key):
+            raise ValueError("Unsupported export option: " + key)
+        setattr(opt, key, val)
     return opt
 
 
@@ -525,15 +537,7 @@ def handle_export_obj(params):
         return {"exported": bool(paths), "file_paths": paths, "format": "obj",
                 "via": "clo_shim", "rejected_options": rejected}
     if options:
-        # CLO 2026.1: ImportExportOption is a plain constructible struct.
-        # Older builds exposed a NewImportExportOption() factory.
-        if hasattr(export_api, "ImportExportOption"):
-            opt = export_api.ImportExportOption()
-        else:
-            opt = export_api.NewImportExportOption()
-        for key, val in options.items():
-            if hasattr(opt, key):
-                setattr(opt, key, val)
+        opt = _build_export_option(options)
         result = export_api.ExportOBJ(file_path, opt)
     else:
         result = export_api.ExportOBJ(file_path)
@@ -554,11 +558,8 @@ def handle_export_fbx(params):
         paths, rejected = sh.export_fbx(file_path, params.get("options"))
         return {"exported": bool(paths), "file_paths": paths, "format": "fbx",
                 "via": "clo_shim", "rejected_options": rejected}
-    if not hasattr(export_api, "ImportExportOption"):
-        # every ExportFBX overload takes ImportExportOption, and unlike GLB/GLTF
-        # there is no ...WithDialog variant to fall back to
-        raise _unsupported("ExportFBX")
-    result = export_api.ExportFBX(file_path, _build_export_option(params.get("options")))
+    options = _build_export_option(params.get("options"))
+    result = export_api.ExportFBX(file_path, options)
     return {"exported": bool(result), "file_path": result or file_path, "format": "fbx"}
 
 
@@ -569,9 +570,9 @@ def handle_export_glb(params):
         paths, rejected = sh.export_glb(file_path, params.get("options"))
         return {"exported": bool(paths), "file_paths": paths, "format": "glb",
                 "via": "clo_shim", "rejected_options": rejected}
-    if hasattr(export_api, "ImportExportOption"):
+    if hasattr(export_api, "ImportExportOption") or hasattr(export_api, "NewImportExportOption"):
         result = export_api.ExportGLB(file_path, _build_export_option(params.get("options")))
-    elif hasattr(export_api, "ExportGLBWithDialog"):
+    elif not params.get("options") and hasattr(export_api, "ExportGLBWithDialog"):
         # opens CLO's export dialog; needs a human click but is the only
         # route available while the option type is unregistered
         result = export_api.ExportGLBWithDialog(file_path)
@@ -587,11 +588,11 @@ def handle_export_gltf(params):
         paths, rejected = sh.export_gltf(file_path, params.get("options"), binary=False)
         return {"exported": bool(paths), "file_paths": paths, "format": "gltf",
                 "via": "clo_shim", "rejected_options": rejected}
-    if hasattr(export_api, "ImportExportOption"):
+    if hasattr(export_api, "ImportExportOption") or hasattr(export_api, "NewImportExportOption"):
         result = export_api.ExportGLTF(
             file_path, _build_export_option(params.get("options")), False
         )
-    elif hasattr(export_api, "ExportGLTFWithDialog"):
+    elif not params.get("options") and hasattr(export_api, "ExportGLTFWithDialog"):
         result = export_api.ExportGLTFWithDialog(file_path, False)
     else:
         raise _unsupported("ExportGLTF")
@@ -615,18 +616,45 @@ def handle_export_turntable(params):
     num_images = params.get("number_of_images", 36)
     width = params.get("width", 2500)
     height = params.get("height", 2500)
+    if num_images <= 0 or width <= 0 or height <= 0:
+        raise ValueError("Image count and dimensions must be positive")
+    if os.path.splitext(file_path)[1].lower() not in (".png", ".jpg", ".jpeg"):
+        raise ValueError("Turntable output must be an image filename, such as /output/view.png")
     result = export_api.ExportTurntableImages(file_path, num_images, width, height)
-    return {"exported": bool(result), "file_path": result or file_path,
+    if not result:
+        raise RuntimeError("CLO ExportTurntableImages returned no images; turntable export failed")
+    if len(result) != num_images or any(not os.path.isfile(p) for p in result):
+        raise RuntimeError("CLO did not produce all requested turntable images")
+    return {"exported": True, "file_paths": result,
             "number_of_images": num_images, "width": width, "height": height}
+
+
+def _file_stamp(file_path):
+    try:
+        stat = os.stat(file_path)
+        return stat.st_mtime_ns, stat.st_size
+    except FileNotFoundError:
+        return None
+
+
+def _verify_techpack(file_path, before=None):
+    if before is not None and _file_stamp(file_path) == before:
+        raise RuntimeError("CLO did not update the existing tech pack")
+    with open(file_path, encoding="utf-8") as stream:
+        if not json.load(stream):
+            raise RuntimeError("CLO produced an empty tech pack")
 
 
 def handle_export_tech_pack(params):
     file_path = params["file_path"]
-    # CLO 2026.1: ExportTechPack(filePath, ExportTechpackOption) returns void,
-    # so success is "no exception raised" — bool(result) would always be False.
+    # ExportTechPack returns void: verify the JSON artifact before reporting success.
+    if os.path.splitext(file_path)[1].lower() != ".json":
+        raise ValueError("Tech pack output must be a .json filename")
+    before = _file_stamp(file_path)
     sh = _shim()
     if sh:
         rejected = sh.export_techpack(file_path, params.get("options"))
+        _verify_techpack(file_path, before)
         return {"exported": True, "file_path": file_path,
                 "via": "clo_shim", "rejected_options": rejected}
     if not hasattr(export_api, "ExportTechpackOption"):
@@ -635,7 +663,13 @@ def handle_export_tech_pack(params):
         # returns the pack as a stream rather than writing file_path, so it is
         # not a drop-in substitute — surface the limitation instead.
         raise _unsupported("ExportTechPack", typ="ExportTechpackOption")
-    export_api.ExportTechPack(file_path, export_api.ExportTechpackOption())
+    opt = export_api.ExportTechpackOption()
+    for key, value in params.get("options", {}).items():
+        if not hasattr(opt, key):
+            raise ValueError("Unsupported tech pack option: " + key)
+        setattr(opt, key, value)
+    export_api.ExportTechPack(file_path, opt)
+    _verify_techpack(file_path, before)
     return {"exported": True, "file_path": file_path}
 
 
@@ -650,7 +684,15 @@ def handle_import_file(params):
 def handle_import_avatar(params):
     file_path = params["file_path"]
     apf_path = params.get("apf_path", "")
-    result = import_api.ImportAVAC(file_path, apf_path)
+    extension = os.path.splitext(file_path)[1].lower()
+    if extension == ".avac":
+        result = import_api.ImportAVAC(file_path, apf_path)
+    elif extension == ".avt":
+        if apf_path:
+            raise ValueError("apf_path is supported only for .avac; import the .avt without it")
+        result = import_api.ImportFile(file_path)
+    else:
+        raise ValueError("Avatar file must be .avt or .avac")
     return {"imported": result, "file_path": file_path}
 
 
@@ -664,7 +706,8 @@ def handle_import_fabric(params):
 
 def handle_simulate(params):
     steps = params.get("steps", 100)
-    utility_api.Simulate(steps)
+    if not utility_api.Simulate(steps):
+        raise RuntimeError("Simulate returned false")
     return {"simulated": True, "steps": steps}
 
 
@@ -756,6 +799,7 @@ def handle_get_avatar_genders(params):
 
 HANDLERS = {
     "ping": handle_ping,
+    "stop_bridge": handle_stop_bridge,
     "debug_api": handle_debug_api,
     "debug_sig": handle_debug_sig,
     "debug_modules": handle_debug_modules,
@@ -820,10 +864,14 @@ def process_command(data):
     except (json.JSONDecodeError, ValueError) as e:
         return json.dumps({"id": None, "status": "error", "message": "Invalid JSON: " + str(e)})
 
+    if not isinstance(request, dict):
+        return json.dumps({"id": None, "status": "error", "message": "Request must be an object"})
     req_id = request.get("id")
     cmd_type = request.get("type")
     params = request.get("params", {})
 
+    if not isinstance(cmd_type, str) or not isinstance(params, dict):
+        return json.dumps({"id": req_id, "status": "error", "message": "Invalid command or parameters"})
     handler = HANDLERS.get(cmd_type)
     if not handler:
         return json.dumps({
@@ -834,6 +882,9 @@ def process_command(data):
 
     try:
         result = handler(params)
+        for flag in ("opened", "saved", "imported", "exported", "simulated", "copied", "created", "deleted"):
+            if result.get(flag) is False:
+                raise RuntimeError(cmd_type + " reported " + flag + "=false")
         # With live preview on, force the viewport to redraw after anything
         # that changed state, so a batch can be watched as it happens.
         if _LIVE_PREVIEW["enabled"] and cmd_type not in _READ_ONLY:
@@ -851,73 +902,29 @@ def process_command(data):
 
 
 def poll_loop():
-    """Poll for request files and process them."""
+    """Serve one command at a time on the calling thread."""
     global _server_running
-
-    # Create comm directory
-    if not os.path.exists(COMM_DIR):
-        os.makedirs(COMM_DIR)
-
-    # Clean up stale files
-    for f in [REQUEST_FILE, RESPONSE_FILE]:
-        if os.path.exists(f):
-            try:
-                os.remove(f)
-            except OSError:
-                pass
-
-    log("poll_loop listening in " + COMM_DIR)
-
-    stop_file = os.path.join(COMM_DIR, "stop")
-    if os.path.exists(stop_file):
-        try:
-            os.remove(stop_file)
-        except OSError:
-            pass
-
-    while _server_running:
-        if _deadline is not None and time.time() >= _deadline:
-            log("deadline reached; stopping")
-            break
+    with bridge_lock(COMM_DIR):
+        queue = BridgeQueue(COMM_DIR)
+        stop_file = os.path.join(COMM_DIR, "stop")
         if os.path.exists(stop_file):
-            log("stop file seen; releasing CLO")
-            try:
-                os.remove(stop_file)
-            except OSError:
-                pass
-            break
+            os.remove(stop_file)
+        queue.start()
+        log("protocol 2 ready in " + COMM_DIR)
         try:
-            if os.path.exists(REQUEST_FILE):
-                # Read request
-                with open(REQUEST_FILE, "r") as f:
-                    data = f.read()
-
-                # Delete request file
-                try:
-                    os.remove(REQUEST_FILE)
-                except OSError:
-                    pass
-
-                if data.strip():
-                    # Process and write response
-                    response = process_command(data)
-
-                    # Write to temp file first, then rename (atomic)
-                    tmp_file = RESPONSE_FILE + ".tmp"
-                    with open(tmp_file, "w") as f:
-                        f.write(response)
-
-                    # Rename to final path
-                    if os.path.exists(RESPONSE_FILE):
-                        os.remove(RESPONSE_FILE)
-                    os.rename(tmp_file, RESPONSE_FILE)
-
-        except Exception as e:
-            print("[CLO MCP] Error: " + str(e))
-
-        time.sleep(POLL_INTERVAL)
-
-    log("poll_loop stopped")
+            while _server_running:
+                if _deadline is not None and time.time() >= _deadline:
+                    log("deadline reached; stopping between commands")
+                    break
+                if os.path.exists(stop_file):
+                    os.remove(stop_file)
+                    break
+                if not queue.process_one(process_command):
+                    time.sleep(POLL_INTERVAL)
+        finally:
+            queue.close()
+            _server_running = False
+            log("poll_loop stopped")
 
 
 # ---------------------------------------------------------------------------
@@ -961,8 +968,8 @@ def run_blocking(duration_seconds=600):
     gets the GIL and silently stops serving requests.
 
     This runs the loop inline instead. CLO's UI is unresponsive for the
-    duration, which is acceptable for an automated batch, and the loop always
-    returns after `duration_seconds` so CLO cannot be wedged permanently.
+    duration. The deadline and stop requests are checked BETWEEN commands;
+    they cannot interrupt a native call or dismiss a modal dialog.
     """
     global _server_running, _deadline
     _deadline = time.time() + duration_seconds

@@ -1,218 +1,116 @@
-"""
-CLO3D file-based connection client.
+"""File IPC client. Each command is published once, with its own response file."""
 
-Communicates with the CLO3D plugin via a shared directory.
-The MCP server writes request.json, the plugin reads it, processes,
-and writes response.json. Both sides use atomic writes (temp + rename).
-
-On WSL, auto-detects the Windows temp directory for the shared path.
-Override with CLO3D_MCP_DIR environment variable if needed.
-"""
-
-import json
-import os
+from pathlib import Path
 import time
 import uuid
 
-TIMEOUT = 180  # seconds: simulation/export can take minutes
-POLL_INTERVAL = 0.05  # seconds between file checks
-MAX_RETRIES = 3
-RETRY_DELAY = 1.0
+from .ipc import PROTOCOL, atomic_json, comm_directory, read_json
+
+TIMEOUT = 180
+PING_TIMEOUT = 5
+POLL_INTERVAL = 0.05
+_find_comm_dir = comm_directory
 
 
 class CLO3DConnectionError(Exception):
     pass
 
 
-def _find_comm_dir():
-    """Determine the shared communication directory.
-
-    Priority:
-    1. CLO3D_MCP_DIR env var (explicit override)
-    2. Windows %TEMP%/clo3d_mcp via WSL mount (auto-detect)
-    3. System temp dir fallback
-    """
-    # 1. Explicit override
-    env_dir = os.environ.get("CLO3D_MCP_DIR")
-    if env_dir:
-        return env_dir
-
-    # 2. Auto-detect WSL: look for Windows user temp via /mnt/c
-    # CLO3D runs on Windows, so the plugin writes to Windows %TEMP%
-    if os.path.isdir("/mnt/c/Users"):
-        # Try to find the Windows user from /mnt/c/Users
-        try:
-            users = [
-                d
-                for d in os.listdir("/mnt/c/Users")
-                if d not in ("Public", "Default", "Default User", "All Users")
-                and os.path.isdir(os.path.join("/mnt/c/Users", d))
-            ]
-            for user in users:
-                temp_dir = os.path.join(
-                    "/mnt/c/Users", user, "AppData", "Local", "Temp", "clo3d_mcp"
-                )
-                # If the dir already exists (plugin is running), use it
-                if os.path.isdir(temp_dir):
-                    return temp_dir
-            # If none found yet, use the first real user
-            if users:
-                return os.path.join(
-                    "/mnt/c/Users", users[0], "AppData", "Local", "Temp", "clo3d_mcp"
-                )
-        except OSError:
-            pass
-
-    # 3. Fallback: local temp
-    return os.path.join(os.environ.get("TEMP", "/tmp"), "clo3d_mcp")
-
-
 class CLO3DConnection:
-    """File-based IPC client for the CLO3D plugin."""
-
-    _instance = None
-
-    def __new__(cls, comm_dir=None):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._initialized = False
-        return cls._instance
-
     def __init__(self, comm_dir=None):
-        if self._initialized:
-            return
-        self.comm_dir = comm_dir or _find_comm_dir()
-        self.request_file = os.path.join(self.comm_dir, "request.json")
-        self.response_file = os.path.join(self.comm_dir, "response.json")
-        self._initialized = True
+        self.comm_dir = str(comm_dir or comm_directory())
+
+    def _ready(self):
+        ready = read_json(Path(self.comm_dir) / "ready.json")
+        if (isinstance(ready, dict) and ready.get("protocol") == PROTOCOL
+                and isinstance(ready.get("session"), str)):
+            return ready
+        return None
 
     @property
     def connected(self):
-        """Check if the communication directory exists (plugin is likely running)."""
-        return os.path.isdir(self.comm_dir)
+        """Readiness metadata exists. Use ping() to check actual responsiveness."""
+        return self._ready() is not None
 
     def connect(self):
-        """Ensure the communication directory exists."""
-        if not os.path.isdir(self.comm_dir):
+        if not self.connected:
             raise CLO3DConnectionError(
-                "Cannot find CLO3D communication directory at: " + self.comm_dir + ". "
-                "Is CLO3D running with the MCP plugin loaded?"
+                f"No protocol-{PROTOCOL} CLO bridge ready at {self.comm_dir}. "
+                "Start the updated bridge in CLO and use the same CLO3D_MCP_DIR on both sides."
             )
 
     def disconnect(self):
-        """No-op for file-based connection (kept for API compatibility)."""
-        pass
+        """Clients do not own the shared bridge. Use stop_bridge to release CLO."""
 
-    def send_command(self, command_type, params=None, retries=MAX_RETRIES):
-        """
-        Send a command to CLO3D and return the result.
-
-        Writes request.json, waits for response.json, returns the parsed result.
-        """
-        request = {
-            "id": str(uuid.uuid4()),
-            "type": command_type,
-            "params": params or {},
-        }
-
-        for attempt in range(retries):
-            try:
-                return self._do_send(request)
-            except CLO3DConnectionError:
-                if attempt < retries - 1:
-                    time.sleep(RETRY_DELAY)
-                    continue
-                raise
-
-    def _do_send(self, request):
-        """Write request, poll for response, return result."""
-        # Ensure comm dir exists
-        if not os.path.isdir(self.comm_dir):
-            raise CLO3DConnectionError(
-                "CLO3D communication directory not found: " + self.comm_dir + ". "
-                "Is CLO3D running with the MCP plugin loaded?"
-            )
-
-        # Clean up any stale response file
-        if os.path.exists(self.response_file):
-            try:
-                os.remove(self.response_file)
-            except OSError:
-                pass
-
-        # Write request atomically
-        payload = json.dumps(request)
-        tmp_file = self.request_file + ".tmp"
-        with open(tmp_file, "w") as f:
-            f.write(payload)
-
-        # Atomic rename
-        if os.path.exists(self.request_file):
-            os.remove(self.request_file)
-        os.rename(tmp_file, self.request_file)
-
-        # Poll for response
-        start_time = time.time()
-        while True:
-            elapsed = time.time() - start_time
-            if elapsed > TIMEOUT:
-                raise CLO3DConnectionError(
-                    "Timed out waiting for CLO3D response (" + str(TIMEOUT) + "s). "
-                    "The operation may still be running in CLO3D."
-                )
-
-            if os.path.exists(self.response_file):
-                try:
-                    with open(self.response_file, "r") as f:
-                        data = f.read()
-
-                    # Delete response file
-                    try:
-                        os.remove(self.response_file)
-                    except OSError:
-                        pass
-
-                    if not data.strip():
-                        time.sleep(POLL_INTERVAL)
-                        continue
-
-                    response = json.loads(data)
-
-                    # Verify this response matches our request
-                    if response.get("id") != request["id"]:
-                        # Stale response from a previous request, keep waiting
-                        time.sleep(POLL_INTERVAL)
-                        continue
-
-                    if response.get("status") == "error":
-                        error_msg = response.get("message", "Unknown error from CLO3D")
-                        raise CLO3DConnectionError("CLO3D error: " + error_msg)
-
-                    return response.get("result", {})
-
-                except (json.JSONDecodeError, ValueError):
-                    # File might be partially written, wait and retry
-                    time.sleep(POLL_INTERVAL)
-                    continue
-
+    def send_command(self, command_type, params=None, *, timeout=None):
+        if timeout is None:
+            timeout = PING_TIMEOUT if command_type == "ping" else TIMEOUT
+        if timeout <= 0:
+            raise ValueError("timeout must be positive")
+        deadline = time.monotonic() + timeout
+        startup_deadline = min(deadline, time.monotonic() + PING_TIMEOUT)
+        ready = self._ready()
+        while ready is None and time.monotonic() < startup_deadline:
             time.sleep(POLL_INTERVAL)
+            ready = self._ready()
+        if ready is None:
+            raise CLO3DConnectionError(
+                f"No protocol-{PROTOCOL} CLO bridge ready at {self.comm_dir}. "
+                "Start the updated bridge in CLO with the same CLO3D_MCP_DIR."
+            )
+        request_id = uuid.uuid4().hex
+        directory = Path(self.comm_dir)
+        request_path = directory / "requests" / (request_id + ".json")
+        response_path = directory / "responses" / (request_id + ".json")
+        request = {
+            "protocol": PROTOCOL, "session": ready["session"], "id": request_id,
+            "type": command_type, "params": params if params is not None else {},
+            "expires_at": time.time() + max(0, deadline - time.monotonic()),
+        }
+        try:
+            atomic_json(request_path, request)
+            while True:
+                response = read_json(response_path)
+                if isinstance(response, dict) and response.get("id") == request_id:
+                    if response.get("status") == "error":
+                        raise CLO3DConnectionError("CLO3D error: " + str(response.get("message")))
+                    if response.get("status") != "success":
+                        raise CLO3DConnectionError("Invalid CLO3D response status; command was not retried")
+                    return response.get("result", {})
+                if self._ready() != ready:
+                    # A graceful stop may publish its response just after our first read.
+                    if response_path.exists():
+                        continue
+                    raise CLO3DConnectionError(
+                        "CLO bridge stopped or restarted. Command outcome is unknown; it was not retried."
+                    )
+                if time.monotonic() >= deadline:
+                    raise CLO3DConnectionError(
+                        f"Timed out waiting for CLO3D ({timeout}s). The command may still be running; "
+                        "it was not retried. Inspect CLO before repeating a mutation."
+                    )
+                time.sleep(POLL_INTERVAL)
+        except OSError as exc:
+            raise CLO3DConnectionError(
+                f"CLO3D communication failed: {exc}. Command was not retried; check its outcome."
+            ) from exc
+        finally:
+            # Only cancel our own unclaimed request. A running call cannot be cancelled.
+            request_path.unlink(missing_ok=True)
+            response_path.unlink(missing_ok=True)
 
     def ping(self):
-        """Test the connection. Returns True if CLO3D responds."""
         try:
-            result = self.send_command("ping", retries=1)
-            return result.get("pong", False)
+            return self.send_command("ping").get("pong", False)
         except CLO3DConnectionError:
             return False
 
 
-# Module-level singleton
 _connection = None
 
 
 def get_connection(comm_dir=None):
-    """Get or create the global CLO3D connection."""
     global _connection
-    if _connection is None:
+    if _connection is None or (comm_dir is not None and str(comm_dir) != _connection.comm_dir):
         _connection = CLO3DConnection(comm_dir)
     return _connection

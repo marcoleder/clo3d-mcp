@@ -7,14 +7,16 @@ Static checks, no CLO run needed. Re-run after any CLO or SDK update:
 
 Checks
   1. wiring   — every bridge handler has a tool, and vice versa
-  2. existence— every *_api.X call exists in CLO.app's Python bindings
+  2. hints    — API names appear in the binary (NOT proof of Python bindings)
   3. arity    — every call matches an SDK overload (honouring C++ default args);
                 calls inside try/except or if/else fallbacks are allowed to differ
   4. returns  — no void-returning API has its result used as a success flag
 
-Exit code 0 = clean.
+Exit code 0 = static checks passed, not runtime compatibility.
+This script does not emit api_map2.json or prove that Python option types exist.
 """
 import ast
+import os
 import collections
 import pathlib
 import re
@@ -22,11 +24,11 @@ import subprocess
 import sys
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
-SDK = pathlib.Path("/Users/port/Qt-6.11.2/CLO_SDK_v2026.1.224_Mac/CLOAPIInterface/include")
-BINDINGS = pathlib.Path("/Applications/CLO.app/Contents/Frameworks/libCloScene.dylib")
+SDK = pathlib.Path(os.environ.get("CLO_SDK_DIR", REPO / "sdk")) / "CLOAPIInterface/include"
+BINDINGS = pathlib.Path(os.environ.get("CLO_BINDINGS_PATH", "/Applications/CLO.app/Contents/Frameworks/libCloScene.dylib"))
 
 MODULES = {"pattern_api", "utility_api", "export_api", "fabric_api", "import_api", "rest_api"}
-# structs exposed to Python as constructible types, not virtual methods
+# Optional constructors: deliberately excluded from method checks, NOT verified bindings
 STRUCTS = {"ImportExportOption", "NewImportExportOption", "ExportTechpackOption"}
 
 PLUGIN = REPO / "plugin" / "clo3d_mcp_plugin.py"
@@ -92,7 +94,11 @@ def load_bindings():
 
 
 def main():
+    failures.clear()
     api = load_sdk()
+    if not api:
+        print(f"No SDK declarations found in {SDK}")
+        return 1
     print(f"SDK: {len(api)} functions, {sum(len(v) for v in api.values())} overloads")
     symbols = load_bindings()
 
@@ -187,7 +193,7 @@ def main():
             nparam += 1
     print(f"  ok    {nparam}/{len(sends_keys)} commands with matching parameters")
 
-    print("\n[2/3] API existence + arity")
+    print("\n[2/3] binary name hints + SDK arity")
     n_ok = 0
     for n in ast.walk(tree):
         if not (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)):
@@ -198,7 +204,7 @@ def main():
         fn, where = n.func.attr, f"{PLUGIN.name}:{n.lineno}"
 
         if symbols is not None and fn not in symbols and fn not in STRUCTS:
-            fail(f"{where} {v.id}.{fn} is not present in CLO.app's bindings")
+            fail(f"{where} {v.id}.{fn} has no matching string in the CLO binary (inspect live bindings)")
             continue
 
         overloads = api.get(fn)
@@ -211,6 +217,8 @@ def main():
         if len(n.args) not in arities:
             if id(n) not in guarded:
                 fail(f"{where} {v.id}.{fn} called with {len(n.args)} arg(s); SDK accepts {arities}")
+            else:
+                print(f"  skip  {where} guarded fallback arity was NOT verified")
             continue
 
         # 4. void return used as a success flag
@@ -218,13 +226,13 @@ def main():
             fail(f"{where} {v.id}.{fn} returns void but its result is captured/used")
             continue
         n_ok += 1
-    print(f"  ok    {n_ok} call sites verified")
+    print(f"  ok    {n_ok} call sites passed static checks")
 
     print()
     if failures:
         print(f"{len(failures)} problem(s)")
         return 1
-    print("all checks passed")
+    print("static checks passed; live binding, behavior and artifact validation still required")
     return 0
 
 
