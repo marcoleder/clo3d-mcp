@@ -4,6 +4,8 @@ The [original audit](correctness-audit-2026-09-22.md) describes commit `bbae569`
 This record separates implemented fixes from checks still requiring CLO.
 The [review follow-up](review-followup-2026-09-22.md) covers the twelve findings
 against `174bbc1`, including cancelled-open protection and partial imports.
+The [transport follow-up](transport-followup-2026-09-22.md) covers disk failures,
+protocol 3 timing, orphan cleanup and export-option simplification.
 
 | Finding | Resolution | Verification |
 |---|---|---|
@@ -28,7 +30,7 @@ on a menu restart; replacing an already loaded native binary can require a CLO r
 
 ## Offline evidence
 
-- `uv run python -m pytest tests -q`: **95 passed**, including actual MCP stdio
+- `uv run python -m pytest tests -q`: **114 passed**, including actual MCP stdio
   initialization, discovery of 48 tools, successful ping/stop and propagation of a
   fake CLO simulation failure as an MCP error. No real CLO process is used.
 - `uv run python tools/verify_against_clo.py`: **48/48 parameter mappings and 84
@@ -45,4 +47,4 @@ libraries.
 
 See the [live validation report](live-validation-2026-09-22.md) for evidence and
 remaining platform/fixture limits, and the [checklist](live-test-checklist.md) to
-repeat the run. Both the MCP server and CLO bridge must use protocol 2.
+repeat the run. Both the MCP server and CLO bridge must now use protocol 3.

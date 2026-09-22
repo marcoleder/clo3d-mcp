@@ -1,6 +1,7 @@
 """File IPC client. Each command is published once, with its own response file."""
 
 from pathlib import Path
+import math
 import time
 import uuid
 
@@ -49,7 +50,7 @@ class CLO3DConnection:
     def send_command(self, command_type, params=None, *, timeout=None):
         if timeout is None:
             timeout = PING_TIMEOUT if command_type == "ping" else TIMEOUT
-        if timeout <= 0:
+        if type(timeout) not in (int, float) or not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("timeout must be positive")
         deadline = time.monotonic() + timeout
         startup_deadline = min(deadline, time.monotonic() + PING_TIMEOUT)
@@ -66,11 +67,13 @@ class CLO3DConnection:
         directory = Path(self.comm_dir)
         request_path = directory / "requests" / (request_id + ".json")
         response_path = directory / "responses" / (request_id + ".json")
+        ack_path = request_path.with_suffix(".ack")
         request = {
             "protocol": PROTOCOL, "session": ready["session"], "id": request_id,
             "type": command_type, "params": params if params is not None else {},
-            "expires_at": time.time() + max(0, deadline - time.monotonic()),
+            "timeout_seconds": max(0, deadline - time.monotonic()),
         }
+        acknowledged = False
         try:
             atomic_json(request_path, request)
             while True:
@@ -82,12 +85,20 @@ class CLO3DConnection:
                                 "CLO3D operation outcome is unknown; do not retry. "
                                 + str(response.get("message")))
                         raise CLO3DConnectionError("CLO3D error: " + str(response.get("message")))
-                    if response.get("status") != "success":
+                    if response.get("status") == "claimed":
+                        if not acknowledged and time.monotonic() < deadline:
+                            atomic_json(ack_path, {"id": request_id, "session": ready["session"],
+                                                   "token": response.get("token"),
+                                                   "timeout_seconds": deadline - time.monotonic()})
+                            acknowledged = True
+                    elif response.get("status") != "success":
                         raise CLO3DConnectionError("Invalid CLO3D response status; command was not retried")
-                    return response.get("result", {})
+                    else:
+                        return response.get("result", {})
                 if self._ready() != ready:
                     # A graceful stop may publish its response just after our first read.
-                    if response_path.exists():
+                    latest = read_json(response_path)
+                    if latest != response and isinstance(latest, dict) and latest.get("status") in ("success", "error"):
                         continue
                     raise CLO3DConnectionError(
                         "CLO bridge stopped or restarted. Command outcome is unknown; it was not retried."
@@ -104,8 +115,12 @@ class CLO3DConnection:
             ) from exc
         finally:
             # Only cancel our own unclaimed request. A running call cannot be cancelled.
-            request_path.unlink(missing_ok=True)
-            response_path.unlink(missing_ok=True)
+            for path in (request_path, ack_path, response_path):
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    # Do not mask the operation's outcome with cleanup failure.
+                    pass
 
     def ping(self):
         try:

@@ -1,5 +1,9 @@
 # Review of 174bbc1
 
+This records fixes and validation at `d0aeb7f`. The later
+[transport follow-up](transport-followup-2026-09-22.md) addresses disk failures,
+clock drift, cleanup and option handling, and upgrades both sides to protocol 3.
+
 The review identified real gaps in successful-open verification, partial-import
 handling, snapshot validation, shim discovery and failure tests. These are fixed
 on `fix/correctness-audit`, targeting `main` in

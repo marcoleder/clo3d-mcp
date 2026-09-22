@@ -122,7 +122,7 @@ class CloShim(object):
     _FLOATS = {"scale"}
 
     def _make_opts(self, options):
-        """Build an ImportExportOption handle. Returns (handle, rejected_keys)."""
+        """Build a handle; reject unsupported options before exporting anything."""
         h = self.lib.clo_opts_create()
         if not h:
             raise MemoryError("clo_opts_create failed")
@@ -139,14 +139,14 @@ class CloShim(object):
                     ok = 0
                 if not ok:
                     raise ValueError("Unsupported export option or value: " + k)
-            return h, []
+            return h
         except Exception:
             self.lib.clo_opts_free(h)
             raise
 
     # ---------------------------------------------------------------- exports
 
-    def _run(self, call, opts_handle):
+    def _run(self, call):
         buf = ctypes.create_string_buffer(self.BUF)
         n = call(buf, self.BUF)
         if n == -2:
@@ -157,13 +157,13 @@ class CloShim(object):
         return [p for p in text.split("\n") if p]
 
     def _export(self, cfn, file_path, options, extra=()):
-        h, rejected = self._make_opts(options)
+        h = self._make_opts(options)
         try:
             paths = self._run(
-                lambda b, n: cfn(file_path.encode("utf-8"), h, *(list(extra) + [b, n])), h)
+                lambda b, n: cfn(file_path.encode("utf-8"), h, *(list(extra) + [b, n])))
         finally:
             self.lib.clo_opts_free(h)
-        return paths, rejected
+        return paths
 
     def export_glb(self, file_path, options=None):
         return self._export(self.lib.clo_export_glb, file_path, options)
@@ -190,7 +190,6 @@ class CloShim(object):
         h = self.lib.clo_tp_opts_create()
         if not h:
             raise MemoryError("clo_tp_opts_create failed")
-        rejected = []
         try:
             for k, v in (options or {}).items():
                 if not isinstance(v, bool) or not self.lib.clo_tp_opts_set_bool(h, k.encode("utf-8"), int(v)):
@@ -201,7 +200,6 @@ class CloShim(object):
         if rc == -2:
             raise RuntimeError("clo_shim: CLO API not available in this process")
         # ExportTechPack returns void: rc 0 means "no exception", not "verified"
-        return rejected
 
 
 def load(path=None):

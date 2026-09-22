@@ -44,12 +44,12 @@ def test_timeout_is_not_replayed_and_does_not_steal_next_response(bridge):
     def handler(params):
         calls.append(params)
         started.set()
-        time.sleep(.25)
+        time.sleep(.6)
         completed.set()
         return {"done": True}
     plugin.HANDLERS["slow"] = handler
     with pytest.raises(CLO3DConnectionError, match="not retried"):
-        connection.send_command("slow", timeout=.15)
+        connection.send_command("slow", timeout=.4)
     assert started.is_set()
     assert connection.ping()
     assert completed.is_set()
@@ -68,7 +68,7 @@ def test_multiple_processes_keep_their_own_responses(bridge):
 
 def test_no_bridge_has_short_bounded_wait(tmp_path):
     start = time.monotonic()
-    with pytest.raises(CLO3DConnectionError, match="No protocol-2"):
+    with pytest.raises(CLO3DConnectionError, match=f"No protocol-{PROTOCOL}"):
         CLO3DConnection(tmp_path).send_command("ping", timeout=.05)
     assert time.monotonic() - start < 1
     assert not list(tmp_path.rglob("*.json"))
@@ -92,13 +92,13 @@ def test_client_waits_for_readiness_before_publishing(plugin):
 
 def request(queue, **overrides):
     value = {"id": uuid.uuid4().hex, "protocol": PROTOCOL, "session": queue.session,
-             "type": "ping", "params": {}, "expires_at": time.time() + 10}
+             "type": "ping", "params": {}, "timeout_seconds": 10}
     value.update(overrides)
     atomic_json(queue.requests / (value["id"] + ".json"), value)
     return value
 
 
-@pytest.mark.parametrize("overrides", [{"expires_at": 0}, {"session": "old"}, {"protocol": 1}])
+@pytest.mark.parametrize("overrides", [{"timeout_seconds": 0}, {"session": "old"}, {"protocol": 2}])
 def test_invalid_or_expired_queued_calls_do_not_execute(tmp_path, overrides):
     queue = BridgeQueue(tmp_path)
     queue.start()
@@ -111,14 +111,19 @@ def test_crashed_claim_is_not_replayed_after_restart(tmp_path):
     queue = BridgeQueue(tmp_path)
     queue.start()
     value = request(queue)
+    queue.process_one(lambda _: pytest.fail("must await client acknowledgement"))
+    offered = read_json(queue.responses / (value["id"] + ".json"))
+    atomic_json(queue.requests / (value["id"] + ".ack"), {
+        "id": value["id"], "session": queue.session, "token": offered["token"], "timeout_seconds": 10})
     with pytest.raises(RuntimeError):
         queue.process_one(lambda _: (_ for _ in ()).throw(RuntimeError("crash")))
     second = BridgeQueue(tmp_path)
     second.start()
     assert not second.process_one(lambda _: pytest.fail("replayed"))
-    # Even a duplicate pending file cannot override a claimed request.
+    # Cleanup retires the claim; its old session still prevents replay.
     atomic_json(second.requests / (value["id"] + ".json"), value)
-    assert not second.process_one(lambda _: pytest.fail("replayed"))
+    assert second.process_one(lambda _: pytest.fail("replayed"))
+    assert read_json(second.responses / (value["id"] + ".json"))["status"] == "error"
 
 
 def test_duplicate_bridge_lock_rejected(tmp_path):

@@ -13,9 +13,11 @@ Your AI assistant  <-->  MCP Server  <-->  CLO3D Plugin  <-->  CLO3D
 
 **Verification status (2026-09-22):** all **48 tools** passed the live suite on
 CLO 2026.1.224 / macOS arm64: **52 calls, zero failures**, including avatar import
-and turntable images. The offline suite has **95 passing tests**. The
+and turntable images. The offline suite has **114 passing tests**. The
 [review follow-up](docs/review-followup-2026-09-22.md) adds cancelled-open gates,
 partial-import retry protection and records a second passing live run. See the
+[transport follow-up](docs/transport-followup-2026-09-22.md) for protocol 3,
+disk-failure handling and clock-independent timeouts, and the
 [live validation report](docs/live-validation-2026-09-22.md) for artifacts,
 concurrent-client checks and limits, and the [original audit](docs/correctness-audit-2026-09-22.md)
 for the problems that prompted these fixes. Windows remains untested.
@@ -174,12 +176,17 @@ commands wait up to 180 seconds. Commands are sent once: a timeout does not
 cancel a running CLO operation, and its outcome may be unknown. Inspect the
 scene before repeating a mutation. Expired queued requests are not executed.
 
-**Upgrade both sides together.** Protocol 2 uses `ready.json` plus separate
-`requests/<id>.json` and `responses/<id>.json` files. Restart the MCP server and
+**Upgrade both sides together.** Protocol 3 uses `ready.json`, separate
+request/response files and a client acknowledgement before dispatch. Relative
+durations are measured with local monotonic clocks, avoiding Windows/WSL clock
+skew. Restart the MCP server and
 restart the bridge menu action after updating the checkout. The bridge imports
 the shared standard-library transport from `src/`, so keep the whole checkout.
-Older clients and plugins using shared request.json/response.json are incompatible.
+Protocol 1 and 2 clients/plugins are incompatible with protocol 3.
 Readiness metadata is not a liveness guarantee; use ping after a CLO crash.
+Startup cleans previous-session IPC files. Abandoned claims establish a scene
+review block before removal; a failed marker write retains both an in-memory
+block and the claim, without stopping the command loop or replaying the call.
 
 Call **`stop_bridge`** when finished to release CLO between commands. This stops
 the shared bridge for every client. Client exit alone does not stop it. The
@@ -286,7 +293,7 @@ sentinel between commands. Neither can release CLO while an API call is blocked.
 
 | Symptom | Cause |
 |---|---|
-| No protocol-2 bridge ready | Start the updated bridge and check both IPC directory settings. |
+| No protocol-3 bridge ready | Restart both MCP server and bridge; check both IPC directory settings. |
 | A command times out after 180s | Its outcome may be unknown. Inspect CLO before repeating it. |
 | Menu item missing | **Plugins ▸ Refresh Plug-in** — `pluginSettings.json` is only read at startup and on refresh |
 | Bridge "started" but nothing responds | You used Script Editor on macOS; the thread starves. Use the menu item. |
@@ -301,8 +308,8 @@ sentinel between commands. Neither can release CLO while an API call is blocked.
 
 | | macOS (arm64) | Windows |
 |---|---|---|
-| MCP server + 48 tools | 48/48 live tools; 95 offline tests | untested |
-| Menu-item bridge | protocol 2 and stop/restart tested | untested |
+| MCP server + 48 tools | 48/48 live tools; 114 offline tests | untested |
+| Menu-item bridge | protocol 3; see transport validation report | untested |
 | Script Editor bridge | ❌ thread starves | unverified |
 | Native shim | ABI 2 build/load, exports and AVT tested | MSVC configured; build/load untested |
 | `dialog_watcher.py` | ✅ AppleScript | ❌ macOS only |

@@ -6,7 +6,7 @@ import threading
 
 # Shared transport has no third-party dependencies; CLO does not need mcp installed.
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
-from clo3d_mcp.ipc import BridgeQueue, bridge_lock, comm_directory, atomic_json
+from clo3d_mcp.ipc import PROTOCOL, BridgeQueue, bridge_lock, comm_directory, atomic_json
 from clo3d_mcp.contracts import FAILURE_FLAGS, OperationOutcomeUnknown, export_paths, same_project_path
 
 try:
@@ -47,7 +47,10 @@ LOG_FILE = os.path.join(COMM_DIR, "bridge.log")
 def log(msg):
     """Append a timestamped line to bridge.log; never raise."""
     line = time.strftime("%H:%M:%S ") + str(msg)
-    print("[CLO MCP] " + str(msg))
+    try:
+        print("[CLO MCP] " + str(msg))
+    except Exception:
+        pass
     try:
         os.makedirs(COMM_DIR, exist_ok=True)
         with open(LOG_FILE, "a") as fh:
@@ -575,6 +578,14 @@ def _unsupported(fn, typ="ImportExportOption"):
     return RuntimeError(_NO_OPTION_TYPE.format(ver=_clo_version(), typ=typ, fn=fn))
 
 
+def _apply_options(opt, options, kind="export"):
+    for key, value in (options or {}).items():
+        if not hasattr(opt, key):
+            raise ValueError("Unsupported %s option: %s" % (kind, key))
+        setattr(opt, key, value)
+    return opt
+
+
 def _build_export_option(options):
     """Return an ImportExportOption, or raise a clear error if impossible.
 
@@ -585,12 +596,7 @@ def _build_export_option(options):
         export_api, "NewImportExportOption", None)
     if ctor is None:
         raise _unsupported("ExportOBJ/FBX/GLB/GLTF")
-    opt = ctor()
-    for key, val in (options or {}).items():
-        if not hasattr(opt, key):
-            raise ValueError("Unsupported export option: " + key)
-        setattr(opt, key, val)
-    return opt
+    return _apply_options(ctor(), options)
 
 
 def handle_export_obj(params):
@@ -598,9 +604,9 @@ def handle_export_obj(params):
     options = params.get("options", {})
     sh = _shim() if options else None
     if sh:
-        paths, rejected = sh.export_obj(file_path, options)
+        paths = sh.export_obj(file_path, options)
         return {"exported": bool(paths), "file_paths": paths, "format": "obj",
-                "via": "clo_shim", "rejected_options": rejected}
+                "via": "clo_shim"}
     if options:
         opt = _build_export_option(options)
         result = export_api.ExportOBJ(file_path, opt)
@@ -620,9 +626,9 @@ def handle_export_fbx(params):
     file_path = params["file_path"]
     sh = _shim()
     if sh:
-        paths, rejected = sh.export_fbx(file_path, params.get("options"))
+        paths = sh.export_fbx(file_path, params.get("options"))
         return {"exported": bool(paths), "file_paths": paths, "format": "fbx",
-                "via": "clo_shim", "rejected_options": rejected}
+                "via": "clo_shim"}
     options = _build_export_option(params.get("options"))
     result = export_api.ExportFBX(file_path, options)
     return {"exported": bool(result), "file_path": result or file_path, "format": "fbx"}
@@ -632,9 +638,9 @@ def handle_export_glb(params):
     file_path = params["file_path"]
     sh = _shim()
     if sh:
-        paths, rejected = sh.export_glb(file_path, params.get("options"))
+        paths = sh.export_glb(file_path, params.get("options"))
         return {"exported": bool(paths), "file_paths": paths, "format": "glb",
-                "via": "clo_shim", "rejected_options": rejected}
+                "via": "clo_shim"}
     if hasattr(export_api, "ImportExportOption") or hasattr(export_api, "NewImportExportOption"):
         result = export_api.ExportGLB(file_path, _build_export_option(params.get("options")))
     elif not params.get("options") and hasattr(export_api, "ExportGLBWithDialog"):
@@ -650,9 +656,9 @@ def handle_export_gltf(params):
     file_path = params["file_path"]
     sh = _shim()
     if sh:
-        paths, rejected = sh.export_gltf(file_path, params.get("options"), binary=False)
+        paths = sh.export_gltf(file_path, params.get("options"), binary=False)
         return {"exported": bool(paths), "file_paths": paths, "format": "gltf",
-                "via": "clo_shim", "rejected_options": rejected}
+                "via": "clo_shim"}
     if hasattr(export_api, "ImportExportOption") or hasattr(export_api, "NewImportExportOption"):
         result = export_api.ExportGLTF(
             file_path, _build_export_option(params.get("options")), False
@@ -727,21 +733,17 @@ def handle_export_tech_pack(params):
     before = _file_stamp(file_path)
     sh = _shim()
     if sh:
-        rejected = sh.export_techpack(file_path, params.get("options"))
+        sh.export_techpack(file_path, params.get("options"))
         _verify_techpack(file_path, before)
         return {"exported": True, "file_path": file_path,
-                "via": "clo_shim", "rejected_options": rejected}
+                "via": "clo_shim"}
     if not hasattr(export_api, "ExportTechpackOption"):
         # ExportTechPack(str, ExportTechpackOption) is the only overload.
         # ExportTechPackToStream(str) exists and needs no option type, but it
         # returns the pack as a stream rather than writing file_path, so it is
         # not a drop-in substitute — surface the limitation instead.
         raise _unsupported("ExportTechPack", typ="ExportTechpackOption")
-    opt = export_api.ExportTechpackOption()
-    for key, value in params.get("options", {}).items():
-        if not hasattr(opt, key):
-            raise ValueError("Unsupported tech pack option: " + key)
-        setattr(opt, key, value)
+    opt = _apply_options(export_api.ExportTechpackOption(), params.get("options"), "tech pack")
     export_api.ExportTechPack(file_path, opt)
     _verify_techpack(file_path, before)
     return {"exported": True, "file_path": file_path}
@@ -946,18 +948,48 @@ HANDLERS = {
 # File-based communication
 # ---------------------------------------------------------------------------
 
+_review_state = None
+
+
 def _review_file():
     return os.path.join(COMM_DIR, "scene-review-required.json")
 
 
 def _review_required():
     # Existence is fail-closed even if an interrupted write/corruption lost details.
-    return os.path.exists(_review_file())
+    return _review_state is not None or os.path.exists(_review_file())
+
+
+def _persist_review():
+    if os.path.exists(_review_file()):
+        return True
+    if _review_state is None:
+        return False
+    try:
+        atomic_json(_review_file(), _review_state)
+        return True
+    except OSError as exc:
+        log("Cannot persist scene review; mutations remain blocked in memory: " + str(exc))
+        return False
+
+
+def _mark_review(details):
+    global _review_state
+    if _review_state is None:
+        _review_state = details
+    return _persist_review()
+
+
+def _abandoned_claims(paths):
+    return _mark_review({"command": "bridge_restart", "reason": "Abandoned request outcome is unknown",
+                         "claims": [path.name for path in paths]})
 
 
 def _clear_review():
-    if _review_required():
+    global _review_state
+    if os.path.exists(_review_file()):
         os.remove(_review_file())
+    _review_state = None
 
 
 def _is_recovery(command, params):
@@ -1009,8 +1041,8 @@ def process_command(data):
                     "message": str(type(e).__name__) + ": " + str(e)}
         if isinstance(e, OperationOutcomeUnknown):
             response.update(outcome="unknown", retry_safe=False, scene_review_required=True)
-            if not _review_required():
-                atomic_json(_review_file(), {"command": cmd_type, "id": req_id, "reason": str(e)})
+            response["review_persisted"] = _mark_review(
+                {"command": cmd_type, "id": req_id, "reason": str(e)})
         return json.dumps(response)
 
 
@@ -1022,21 +1054,34 @@ def poll_loop():
         stop_file = os.path.join(COMM_DIR, "stop")
         if os.path.exists(stop_file):
             os.remove(stop_file)
-        queue.start()
-        log("protocol 2 ready in " + COMM_DIR)
+        queue.start(on_abandoned=_abandoned_claims)
+        log("protocol %s ready in %s" % (PROTOCOL, COMM_DIR))
         try:
             while _server_running:
-                if _deadline is not None and time.time() >= _deadline:
+                if _deadline is not None and time.monotonic() >= _deadline:
                     log("deadline reached; stopping between commands")
                     break
-                if os.path.exists(stop_file):
-                    os.remove(stop_file)
-                    break
-                if not queue.process_one(process_command):
+                try:
+                    if os.path.exists(stop_file):
+                        try:
+                            os.remove(stop_file)
+                        except OSError:
+                            pass
+                        break
+                    if not _review_required() or _persist_review():
+                        queue.retire_abandoned()
+                    if not queue.process_one(process_command):
+                        time.sleep(POLL_INTERVAL)
+                except Exception as exc:
+                    _mark_review({"command": "bridge_io", "reason": str(exc)})
+                    log("Command loop error; no command replayed: " + str(exc))
                     time.sleep(POLL_INTERVAL)
         finally:
-            queue.close()
             _server_running = False
+            try:
+                queue.close()
+            except OSError as exc:
+                log("Cannot remove readiness file: " + str(exc))
             log("poll_loop stopped")
 
 
@@ -1085,7 +1130,7 @@ def run_blocking(duration_seconds=600):
     they cannot interrupt a native call or dismiss a modal dialog.
     """
     global _server_running, _deadline
-    _deadline = time.time() + duration_seconds
+    _deadline = time.monotonic() + duration_seconds
     _server_running = True
     log("run_blocking for %ss (UI will be unresponsive)" % duration_seconds)
     try:

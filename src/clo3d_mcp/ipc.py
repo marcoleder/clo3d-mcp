@@ -9,7 +9,8 @@ import tempfile
 import time
 import uuid
 
-PROTOCOL = 2
+PROTOCOL = 3
+ACK_TIMEOUT = 5.0
 
 
 def comm_directory():
@@ -95,11 +96,42 @@ class BridgeQueue:
         self.responses = self.directory / "responses"
         self.ready = self.directory / "ready.json"
         self.session = uuid.uuid4().hex
+        self._offered = None
+        self._abandoned = set()
 
-    def start(self):
+    def start(self, on_abandoned=None):
         for directory in (self.requests, self.responses):
             directory.mkdir(parents=True, exist_ok=True)
+        # We hold the consumer lock, and have not published this session yet.
+        # Clients from previous sessions can only receive an unknown outcome.
+        claims = list(self.requests.glob("*.working"))
+        removable = not claims or on_abandoned is None or on_abandoned(claims)
+        for directory, patterns in ((self.responses, ("*.json",)),
+                                    (self.requests, ("*.json", "*.ack"))):
+            for pattern in patterns:
+                for path in directory.glob(pattern):
+                    self._remove(path)
+        if removable:
+            for path in claims:
+                self._remove(path)
+        else:
+            self._abandoned.update(claims)
         atomic_json(self.ready, {"protocol": PROTOCOL, "session": self.session})
+
+    def retire_abandoned(self):
+        """Call only after preserving the review marker or verifying recovery."""
+        for path in list(self._abandoned):
+            self._remove(path)
+            if not path.exists():
+                self._abandoned.discard(path)
+
+    @staticmethod
+    def _remove(path):
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            # Locked orphan files must not prevent serving unrelated requests.
+            pass
 
     def close(self):
         ready = read_json(self.ready)
@@ -107,6 +139,44 @@ class BridgeQueue:
             self.ready.unlink(missing_ok=True)
 
     def process_one(self, dispatch):
+        if self._offered is not None:
+            request, claimed, token, started, deadline = self._offered
+            request_id = request["id"]
+            ack_path = claimed.with_suffix(".ack")
+            ack = read_json(ack_path)
+            valid = (isinstance(ack, dict) and ack.get("id") == request_id
+                     and ack.get("session") == self.session and ack.get("token") == token)
+            if valid:
+                remaining = ack.get("timeout_seconds")
+                valid = type(remaining) in (int, float) and math.isfinite(remaining) and remaining > 0
+                if valid:
+                    # Anchor the client's remaining duration to our earlier
+                    # claim time, conservatively accounting for the handshake.
+                    deadline = min(deadline, started + remaining)
+            expired = time.monotonic() >= deadline
+            if not expired and not valid:
+                return False
+            # Forget before calling native code or writing a result: neither a
+            # failed dispatch nor a failed write may cause a replay next poll.
+            self._offered = None
+            self._remove(ack_path)
+            try:
+                if expired:
+                    response = {"id": request_id, "status": "error",
+                                "message": "Request acknowledgement expired before execution"}
+                else:
+                    response = json.loads(dispatch(json.dumps(request)))
+                atomic_json(self.responses / (request_id + ".json"), response)
+            except Exception:
+                self._abandoned.add(claimed)
+                raise
+            # A failed review-marker write leaves the original durable claim as
+            # evidence for the next bridge start, even if the client exits now.
+            if response.get("review_persisted") is not False:
+                self._remove(claimed)
+            else:
+                self._abandoned.add(claimed)
+            return True
         # Arrival order is best effort; disappearing files are client cancellations.
         def modified(path):
             try:
@@ -136,15 +206,25 @@ class BridgeQueue:
             elif request.get("protocol") != PROTOCOL or request.get("session") != self.session:
                 error = "Bridge session changed; request was not executed"
             else:
-                expiry = request.get("expires_at")
-                if (not isinstance(expiry, (int, float)) or not math.isfinite(expiry)
-                        or time.time() >= expiry):
-                    error = "Request expired before execution"
+                timeout = request.get("timeout_seconds")
+                if (type(timeout) not in (int, float) or not math.isfinite(timeout)
+                        or timeout <= 0):
+                    error = "Invalid relative request timeout"
             if error:
                 response = {"id": request_id, "status": "error", "message": error}
+                atomic_json(response_path, response)
+                self._remove(claimed)
             else:
-                response = json.loads(dispatch(json.dumps(request)))
-            atomic_json(response_path, response)
-            claimed.unlink()
+                token = uuid.uuid4().hex
+                # No wall-clock stamps cross the process/WSL boundary. A fresh
+                # acknowledgement proves the client was still waiting at claim.
+                started = time.monotonic()
+                deadline = started + min(timeout, ACK_TIMEOUT)
+                try:
+                    atomic_json(response_path, {"id": request_id, "status": "claimed", "token": token})
+                except Exception:
+                    self._abandoned.add(claimed)
+                    raise
+                self._offered = (request, claimed, token, started, deadline)
             return True
         return False

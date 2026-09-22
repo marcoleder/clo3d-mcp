@@ -90,3 +90,38 @@ def test_native_avatar_failure_codes_propagate_to_uncertain_response(shim_module
         "id": "failure-code", "type": "import_avatar", "params": {"file_path": "avatar.avt"}})))
     assert response["status"] == "error"
     assert response["outcome"] == "unknown" and response["retry_safe"] is False
+
+
+@pytest.mark.parametrize("format", ["obj", "fbx", "glb", "gltf"])
+def test_native_export_paths_are_returned_without_rejected_option_plumbing(shim_module, plugin, monkeypatch, format):
+    shim = shim_module.CloShim.__new__(shim_module.CloShim)
+    freed = []
+    def export(*args):
+        args[-2].value = b"/output/model.mesh"
+        return 1
+    shim.lib = SimpleNamespace(clo_opts_create=lambda: 123, clo_opts_free=freed.append,
+                               clo_opts_set_bool=lambda *args: 1)
+    setattr(shim.lib, "clo_export_" + format, export)
+    monkeypatch.setattr(plugin, "_shim", lambda: shim)
+    result = getattr(plugin, "handle_export_" + format)({
+        "file_path": "model." + format, "options": {"bExportAvatar": False}})
+    assert result["file_paths"] == ["/output/model.mesh"]
+    assert result["exported"] is True
+    assert "rejected_options" not in result
+    assert freed == [123]
+
+
+def test_native_techpack_verifies_artifact_without_rejected_options(shim_module, plugin, monkeypatch, tmp_path):
+    shim = shim_module.CloShim.__new__(shim_module.CloShim)
+    freed = []
+    def export(path, handle):
+        Path(path.decode()).write_text('{"garment": true}')
+        return 0
+    shim.lib = SimpleNamespace(clo_tp_opts_create=lambda: 123, clo_tp_opts_free=freed.append,
+                               clo_tp_opts_set_bool=lambda *args: 1, clo_export_techpack=export)
+    monkeypatch.setattr(plugin, "_shim", lambda: shim)
+    result = plugin.handle_export_tech_pack({"file_path": str(tmp_path / "pack.json"),
+                                             "options": {"m_bSaveZprj": False}})
+    assert result["exported"] is True
+    assert "rejected_options" not in result
+    assert freed == [123]

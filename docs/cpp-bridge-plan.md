@@ -13,8 +13,9 @@ The original claim that all tools worked was incorrect: avatar import used the
 wrong API and turntable export returned an empty list. See the
 [original audit](correctness-audit-2026-09-22.md) and the README for current status.
 
-The transport now uses protocol 2: session readiness metadata, separate files
-for each request and response, deadlines checked before dispatch, and one
+The transport now uses protocol 3: session readiness metadata, separate files
+for each request and response, fresh client acknowledgement and relative
+durations checked against local monotonic clocks before dispatch, and one
 consumer protected by an OS lock. Clients publish a command once. A timeout or
 process crash can leave its outcome unknown; retrying a mutation automatically
 is unsafe. A C++ replacement must preserve these properties and must not

@@ -7,6 +7,8 @@ This checklist remains the procedure for subsequent runs; Windows and AVAC/APF
 fixtures still require separate validation.
 The [follow-up review](review-followup-2026-09-22.md) documents the additional
 project-identity gates, uncertain-outcome handling and regression tests.
+The [transport follow-up](transport-followup-2026-09-22.md) covers protocol 3
+and disk/clock fault injection.
 
 Running the harness without `--run-live` only prints preparation instructions;
 it does not start an MCP process, contact the bridge, launch CLO or click its UI.
@@ -28,7 +30,7 @@ it does not start an MCP process, contact the bridge, launch CLO or click its UI
 6. Start CLO manually when testing is wanted. Restart CLO if the native library
    was replaced while it was loaded. Register the blocking launcher and click
    **Plugins → Plug-in → MCP Bridge (serve)**. Both sides must use the same
-   `CLO3D_MCP_DIR`. Protocol 1 and protocol 2 cannot be mixed.
+   `CLO3D_MCP_DIR`. Both sides must use protocol 3; restart the MCP server too.
 7. Be ready to confirm modal dialogs. Optionally run
    `uv run python tools/dialog_watcher.py 900` in a separate terminal on macOS;
    stop it after the run. It only recognizes a limited set of dialogs. Do not
@@ -61,7 +63,7 @@ no-op and cannot resolve the block.
 
 | Area | Check in CLO |
 |---|---|
-| Protocol 2 | Ping after readiness; two independent clients get their own read-only responses; stopping releases the UI; restarting gives a new session |
+| Protocol 3 | Ping after readiness; two independent clients get their own read-only responses; stopping releases the UI; restarting gives a new session |
 | Avatar | `.avt` imports through native ImportAvatar in add mode; avatar readback and visible scene are correct; `.avac` with an APF needs a separate fixture and check |
 | Patterns | Copy offset is relative to the original; returned new index is usable; create/copy/delete counts change; rename reads back correctly |
 | Simulation | A valid simulation reports success; assess drape visually. Do not use a dangerous native failure to test false returns: that regression is covered offline |

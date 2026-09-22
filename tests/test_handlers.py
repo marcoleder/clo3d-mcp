@@ -87,6 +87,13 @@ def test_python_options_reject_unknown_keys(plugin):
         plugin._build_export_option({"typo": True})
 
 
+def test_python_techpack_options_reject_unknown_keys_before_export(plugin, tmp_path):
+    plugin.export_api.ExportTechpackOption = lambda: SimpleNamespace(m_bSaveZprj=True)
+    plugin.export_api.ExportTechPack = lambda *args: pytest.fail("unsupported options reached export")
+    with pytest.raises(ValueError, match="Unsupported tech pack option"):
+        plugin.handle_export_tech_pack({"file_path": str(tmp_path / "pack.json"), "options": {"typo": True}})
+
+
 def test_turntable_empty_result_is_failure(plugin):
     calls = []
     plugin.utility_api.GetCurrentColorwayIndex = lambda: 2
