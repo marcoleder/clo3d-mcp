@@ -650,9 +650,16 @@
         "type": "integer"
       },
       "simulation_mode": {
-        "default": 0,
-        "title": "Simulation Mode",
-        "type": "integer"
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Simulation Mode"
       }
     },
     "required": [

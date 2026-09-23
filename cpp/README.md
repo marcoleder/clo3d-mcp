@@ -62,7 +62,8 @@ CLO_NATIVE_HARNESS="$PWD/cpp/build-offline/clo_queue_harness" uv run pytest test
    to `script` for a binary.
 3. Start the native menu item. Repeated Start is idempotent. Use the same
    `CLO3D_MCP_DIR` in CLO and the existing external Python MCP server, then ping.
-   Defaults remain `$TEMP/clo3d_mcp` when TEMP is set, otherwise `~/clo3d_mcp`.
+   Defaults are `%TEMP%/clo3d_mcp` on Windows and `~/clo3d_mcp` on macOS.
+   macOS ignores `TEMP` and `TMPDIR` so MCP stdio filtering cannot change the path.
 4. Native ping reports `backend: cpp`, Qt/SDK versions and scene-review state.
    The unchanged 48-tool server now sends its commands to the native backend.
 
@@ -91,6 +92,8 @@ backend switch does not authorize repeating a timed-out mutation.
   negatives and overflow. Point types are 0/2/3; assignment options are 1–3;
   color channels 0–255; face values 0–2. Model and tech-pack options use the
   shim's allowlist and SDK constructor defaults. Axes accept 0–2, weld 0–3.
+- An omitted or null simulation mode selects GPU for quality 3 and CPU for
+  qualities 0–2. Explicit CPU/GPU modes remain authoritative.
 - File arguments require absolute paths and existing input files/output parent
   directories. Exports verify nonempty artifacts, format structure and freshness.
   Use a dedicated output directory: freshness scans reject directories over

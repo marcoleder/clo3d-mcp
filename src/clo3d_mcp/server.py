@@ -557,14 +557,17 @@ def delete_fabric(fabric_index: int) -> dict:
 
 
 @mcp.tool()
-def set_simulation_quality(quality: int, simulation_mode: int = 0) -> dict:
+def set_simulation_quality(quality: int, simulation_mode: int | None = None) -> dict:
     """Set the simulation quality preset.
 
     Args:
         quality: 0 = Normal (default), 1 = Animation (stable),
             2 = Fitting (accurate fabric), 3 = FAST (GPU).
-        simulation_mode: 0 = CPU, 1 = FAST (GPU).
+        simulation_mode: 0 = CPU, 1 = FAST (GPU). Omit to select GPU for
+            quality=3 and CPU for the other presets.
     """
+    if simulation_mode is None:
+        simulation_mode = 1 if quality == 3 else 0
     return _send(
         "set_simulation_quality",
         {"quality": quality, "simulation_mode": simulation_mode},

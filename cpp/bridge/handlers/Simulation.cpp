@@ -8,7 +8,9 @@ void addSimulationHandlers(Registry& r) {
         return QJsonObject{{"simulated", true}, {"steps", steps}};
     }};
     r["set_simulation_quality"] = {Access::Mutation, [](auto& c, const auto& p) {
-        int quality = integer(p, "quality", 0, 3), mode = integer(p, "simulation_mode", 0, 1, 0);
+        int quality = integer(p, "quality", 0, 3);
+        int mode = p.value("simulation_mode").isUndefined() || p.value("simulation_mode").isNull()
+            ? (quality == 3 ? 1 : 0) : integer(p, "simulation_mode", 0, 1);
         c.change([&] { c.sdk.SetSimulationQuality(quality, mode); });
         require(c.sdk.GetSimulationQuality() == std::make_pair(quality, mode), "Simulation quality readback failed");
         return QJsonObject{{"quality", quality}, {"simulation_mode", mode}};

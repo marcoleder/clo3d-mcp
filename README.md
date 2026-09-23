@@ -150,9 +150,12 @@ claude mcp add clo3d -- /ABSOLUTE/PATH/TO/clo3d-mcp/.venv/bin/clo3d-mcp
 }
 ```
 
-The IPC directory must match on both sides. Both now default to `~/clo3d_mcp`
-when `TEMP` is unset (macOS), or `%TEMP%/clo3d_mcp` on Windows. WSL clients
-auto-detect a Windows user temp directory; use an explicit path when ambiguous.
+The IPC directory must match on both sides. Both backends and the MCP server
+default to `~/clo3d_mcp` on macOS, ignoring `TMPDIR` and `TEMP` so Dock launches
+and MCP stdio environment filtering agree. Windows uses `%TEMP%/clo3d_mcp`;
+`TMPDIR` cannot override it. WSL clients auto-detect a Windows user temp
+directory, ignoring Linux temp settings; use an explicit path
+when ambiguous.
 For a custom directory, set `CLO3D_MCP_DIR` in both the MCP client's server
 environment and CLO's environment; setting it in the client does not configure CLO.
 
@@ -221,6 +224,14 @@ stop-file command above is also available when the MCP client has exited.
 **Avatars** — `get_avatars` `get_avatar_genders` `show_hide_avatar` `import_avatar`\*
 
 **Simulation** — `simulate` `set_simulation_quality`
+
+Omitting `simulation_mode` selects GPU for `quality=3` and CPU for the other
+presets. Explicit `0` (CPU) or `1` (GPU) overrides that default.
+The Python fallback recognizes discoverable older one-argument
+`SetSimulationQuality` and `CopyColorway` bindings before dispatch, with default
+options only. Unsupported custom options fail explicitly; an SDK exception
+never triggers a second call. Bindings without usable signature metadata use
+the current two-argument form. The native plugin requires the matching 2026.1 SDK.
 
 **Export** — `export_obj` `export_fbx`\* `export_glb`\* `export_gltf`\*
 `export_thumbnail` `export_snapshot` `export_turntable` `export_tech_pack`\*

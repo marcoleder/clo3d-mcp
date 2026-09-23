@@ -81,6 +81,84 @@ def test_options_never_silently_fall_back_to_dialog(plugin, format):
                                                   "options": {"bExportAvatar": False}})
 
 
+@pytest.mark.parametrize("format", ["obj", "fbx", "glb", "gltf"])
+@pytest.mark.parametrize("error", [AttributeError, TypeError])
+def test_export_option_constructor_errors_never_discard_options(plugin, format, error):
+    def construct():
+        raise error("option constructor failed")
+    plugin.export_api.ImportExportOption = construct
+    for name in ("ExportOBJ", "ExportFBX", "ExportGLB", "ExportGLTF", "ExportGLBWithDialog", "ExportGLTFWithDialog"):
+        setattr(plugin.export_api, name, lambda *args: pytest.fail("export ran after option failure"))
+    with pytest.raises(error, match="option constructor failed"):
+        getattr(plugin, "handle_export_" + format)({"file_path": "x." + format, "options": {"scale": 2}})
+
+
+@pytest.mark.parametrize("quality", range(4))
+def test_simulation_preset_selects_default_mode_in_server_and_handler(plugin, monkeypatch, quality):
+    from clo3d_mcp import server
+    calls = []
+    plugin.utility_api.SetSimulationQuality = lambda q, mode: calls.append((q, mode))
+    monkeypatch.setattr(server, "_send", lambda command, params: plugin.HANDLERS[command](params))
+    default = int(quality == 3)
+    assert server.set_simulation_quality(quality)["simulation_mode"] == default
+    assert plugin.handle_set_simulation_quality({"quality": quality})["simulation_mode"] == default
+    assert plugin.handle_set_simulation_quality({"quality": quality, "simulation_mode": None})["simulation_mode"] == default
+    assert server.set_simulation_quality(quality, 1 - default)["simulation_mode"] == 1 - default
+    assert calls == [(quality, default)] * 3 + [(quality, 1 - default)]
+
+
+@pytest.mark.parametrize("command,api_name,params", [
+    ("set_simulation_quality", "SetSimulationQuality", {"quality": 3}),
+    ("copy_colorway", "CopyColorway", {"colorway_index": 2}),
+])
+@pytest.mark.parametrize("arity", [1, 2])
+@pytest.mark.parametrize("metadata", ["signature", "pybind_doc"])
+def test_legacy_api_arity_is_selected_before_sdk_entry(plugin, command, api_name, params, arity, metadata):
+    calls = []
+    def legacy(value):
+        calls.append((value,))
+        return 7
+    def modern(value, option):
+        calls.append((value, option))
+        return 7
+    api = legacy if arity == 1 else modern
+    if metadata == "pybind_doc":
+        class Binding:
+            __name__ = api_name
+            __doc__ = api_name + ("(arg0: int) -> int" if arity == 1 else "(arg0: int, arg1: int) -> int")
+            @property
+            def __signature__(self):
+                raise ValueError("pybind signature unavailable")
+            def __call__(self, *args):
+                return (legacy if arity == 1 else modern)(*args)
+        api = Binding()
+    setattr(plugin.utility_api, api_name, api)
+    result = plugin.HANDLERS[command](params)
+    first, second = (3, 1) if command == "set_simulation_quality" else (2, 0)
+    assert calls == [(first,) if arity == 1 else (first, second)]
+    assert result["quality" if command == "set_simulation_quality" else "new_index"] == (3 if command == "set_simulation_quality" else 7)
+    if arity == 1:
+        unsupported = {"simulation_mode": 0} if command == "set_simulation_quality" else {"copy_option": 2}
+        with pytest.raises(ValueError, match="This CLO build"):
+            plugin.HANDLERS[command]({**params, **unsupported})
+        assert len(calls) == 1
+
+
+@pytest.mark.parametrize("command,api_name,params", [
+    ("set_simulation_quality", "SetSimulationQuality", {"quality": 3}),
+    ("copy_colorway", "CopyColorway", {"colorway_index": 2}),
+])
+def test_api_type_error_after_dispatch_never_retries_legacy_overload(plugin, command, api_name, params):
+    calls = []
+    def api(value, option):
+        calls.append((value, option))
+        raise TypeError("failed after mutation")
+    setattr(plugin.utility_api, api_name, api)
+    with pytest.raises(TypeError, match="after mutation"):
+        plugin.HANDLERS[command](params)
+    assert len(calls) == 1
+
+
 def test_python_options_reject_unknown_keys(plugin):
     plugin.export_api.ImportExportOption = lambda: SimpleNamespace(scale=1)
     with pytest.raises(ValueError, match="Unsupported"):

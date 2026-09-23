@@ -5,7 +5,7 @@ Implemented on `feat/native-cpp-plugin`, from the working-copy specification in
 when implementation began and is preserved. This filename did not previously
 exist; it now records implementation status and qualification evidence.
 
-The C++ backend is opt-in. The external Python MCP server, all 48 input schemas,
+The C++ backend is opt-in. The external Python MCP server, all 48 tool names,
 protocol 3, Python fallback and ABI-2 shim are retained. There is no dual dispatch,
 automatic fallback or retry. Installation and reproducible build commands are
 in [`cpp/README.md`](../cpp/README.md).
@@ -23,7 +23,7 @@ in [`cpp/README.md`](../cpp/README.md).
 | Export options/artifacts | Constructor defaults and the shim's exact option allowlist; direct explicit-option OBJ/FBX/GLB/glTF, turntable colorway overload, tech pack JSON and sidecars, nested snapshots, output structure and freshness checks. |
 | Preview | Native refresh returns to the host loop without capturing images. Explicit path selects snapshot mode; no-path calls reset it. Failed automatic capture adds `preview_error` to successful mutation results. Ping exposes refresh/capture counters. |
 | Build/package | Separate shim, core, command library, plugin, queue harness and three native test executables; exact Qt 6.10.3; versioned binary, checksum/version manifest and notices; macOS host-framework retargeting and ad-hoc signing. |
-| Client compatibility | Frozen 48 input schemas and executable native registry comparison. Only backend-sensitive tool descriptions changed. `connection.py` and the Python transport are unchanged. |
+| Client compatibility | Frozen 48 input schemas and executable Python/native handler comparisons. Simulation mode now defaults to automatic (GPU for quality 3); existing explicit integer modes remain valid. `connection.py` retains one publication and a five-second ping deadline. Both backends use a fixed macOS home directory independent of temp environment variables. |
 
 ## Lifecycle prerequisite: passed before handler porting
 
@@ -68,6 +68,14 @@ AppleClang **17.0.0.17000604**, deployment target **15.0**.
   successful edits after oversized reads, bounded uncertain-mutation errors,
   and startup/handshake/rejection write failures without false scene review,
   including restart immediately after the failure.
+- Pre-merge regressions also cover default simulation modes in both backends,
+  legacy Python API arity selection without mutation retries, stdio environment
+  filtering, Windows/WSL temp-directory precedence, default ping deadlines,
+  delete/copy timeout nonreplay, and option-constructor errors without fallback.
+  Schema and Python handler coverage run even when native tests are not built.
+  The [pre-merge review record](pre-merge-review-2026-09-23.md) records **173
+  passing Python tests**, 3 native suites, the Release rebuild, and each finding's
+  disposition; it supersedes the earlier offline test count below the initial build.
 - [Full live run](validation/native-live-2026-09-23.json): **48/48 tools**, **52
   successful calls**, **zero failures**, and **170 files produced**. All eight
   export tools passed, including tech-pack project sidecars and referenced

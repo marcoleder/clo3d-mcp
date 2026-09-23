@@ -5,6 +5,7 @@ import json
 import math
 import os
 from pathlib import Path
+import sys
 import tempfile
 import time
 import uuid
@@ -14,11 +15,18 @@ ACK_TIMEOUT = 5.0
 
 
 def comm_directory():
+    """Use one directory in the MCP server and CLO, regardless of TMPDIR.
+
+    A custom CLO3D_MCP_DIR must be configured in both processes; the MCP
+    client's server environment is not inherited by a separately launched CLO.
+    """
     override = os.environ.get("CLO3D_MCP_DIR")
     if override:
         return override
+    if sys.platform == "win32":
+        return str(Path(os.environ.get("TEMP") or Path.home()) / "clo3d_mcp")
     users = Path("/mnt/c/Users")
-    if users.is_dir():
+    if sys.platform.startswith("linux") and users.is_dir():
         try:
             candidates = [p / "AppData/Local/Temp/clo3d_mcp"
                           for p in sorted(users.iterdir()) if p.is_dir()
@@ -30,7 +38,8 @@ def comm_directory():
                 return str(candidates[0])
         except OSError:
             pass
-    return str(Path(os.environ.get("TEMP") or Path.home()) / "clo3d_mcp")
+    # MCP stdio filters POSIX temp variables; Dock-launched CLO retains them.
+    return str(Path.home() / "clo3d_mcp")
 
 
 def atomic_json(path, value):

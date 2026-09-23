@@ -91,6 +91,9 @@ int main(int argc, char** argv) {
         sdk.AddFabric = [&](const std::string&) { ++mutations; ++fabrics; return fabrics - 1; };
         sdk.ImportAvatar = [&](const std::string&, const auto& options) { CHECK(options.bAdd && !options.bMoveGarment); ++mutations; ++avatars; names.pop_back(); return true; };
         sdk.ImportFile = [&](const std::string& p) { ++mutations; project = p; return true; };
+        std::pair<int, int> simulation;
+        sdk.SetSimulationQuality = [&](int quality, int mode) { simulation = {quality, mode}; };
+        sdk.GetSimulationQuality = [&] { return simulation; };
         CommandDispatcher dispatcher(sdk, review, directory.path());
         CHECK(dispatcher.registry().size() == 48);
         if (argc == 2 && QString::fromLocal8Bit(argv[1]) == "--registry") {
@@ -114,6 +117,15 @@ int main(int argc, char** argv) {
         CHECK(call("ping")["result"].toObject()["backend"] == "cpp");
         CHECK(!call("ping")["result"].toObject().contains("exported"));
         CHECK(call("debug_api")["status"] == "error");
+        for (int quality = 0; quality <= 3; ++quality) {
+            int mode = quality == 3 ? 1 : 0;
+            CHECK(call("set_simulation_quality", {{"quality", quality}})["status"] == "success");
+            CHECK(simulation == std::make_pair(quality, mode));
+            CHECK(call("set_simulation_quality", {{"quality", quality}, {"simulation_mode", QJsonValue::Null}})["status"] == "success");
+            CHECK(simulation == std::make_pair(quality, mode));
+            CHECK(call("set_simulation_quality", {{"quality", quality}, {"simulation_mode", 1 - mode}})["status"] == "success");
+            CHECK(simulation == std::make_pair(quality, 1 - mode));
+        }
         CHECK(call("set_live_preview", {{"enabled", true}})["result"].toObject()["snapshot_path"].isNull());
         CHECK(call("set_pattern_name", {{"pattern_index", 0}, {"name", "袖"}})["status"] == "success");
         CHECK(refreshes == 1 && snapshots == 0);

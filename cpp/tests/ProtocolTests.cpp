@@ -5,6 +5,7 @@
 #include <QTemporaryDir>
 #include <QThread>
 #include <QUuid>
+#include <vector>
 
 using namespace clo::bridge;
 struct Fixture {
@@ -79,6 +80,24 @@ void checkControllerWriteFailures() {
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     try {
+        {
+            struct Variable { const char* name; bool set; QByteArray value; };
+            std::vector<Variable> saved;
+            for (const auto* name : {"CLO3D_MCP_DIR", "TEMP", "TMPDIR"})
+                saved.push_back({name, qEnvironmentVariableIsSet(name), qgetenv(name)});
+            qunsetenv("CLO3D_MCP_DIR"); qputenv("TMPDIR", "/wrong/temp"); qputenv("TEMP", "/windows/temp");
+#ifdef _WIN32
+            CHECK(commDirectory() == QDir("/windows/temp").filePath("clo3d_mcp"));
+#else
+            CHECK(commDirectory() == QDir::home().filePath("clo3d_mcp"));
+#endif
+            qunsetenv("TEMP"); CHECK(commDirectory() == QDir::home().filePath("clo3d_mcp"));
+            qputenv("CLO3D_MCP_DIR", "/explicit/shared"); CHECK(commDirectory() == "/explicit/shared");
+            for (const auto& variable : saved) {
+                if (variable.set) qputenv(variable.name, variable.value);
+                else qunsetenv(variable.name);
+            }
+        }
         checkControllerWriteFailures();
         for (bool failMarker : {false, true}) {
             Fixture f; auto id = f.submit(); f.offer(id); f.ack(id);

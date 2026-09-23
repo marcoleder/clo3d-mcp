@@ -14,8 +14,12 @@ namespace clo::bridge {
 QString commDirectory() {
     auto override = qEnvironmentVariable("CLO3D_MCP_DIR");
     if (!override.isEmpty()) return override;
-    auto base = qEnvironmentVariable("TEMP");
-    return QDir(base.isEmpty() ? QDir::homePath() : base).filePath("clo3d_mcp");
+    auto base = QDir::homePath();
+#ifdef _WIN32
+    auto temp = qEnvironmentVariable("TEMP");
+    if (!temp.isEmpty()) base = temp;
+#endif
+    return QDir(base).filePath("clo3d_mcp");
 }
 PlatformLock::~PlatformLock() { release(); }
 void PlatformLock::acquire(const QString& directory) {

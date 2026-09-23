@@ -2,13 +2,17 @@ import concurrent.futures
 import json
 import multiprocessing
 from pathlib import Path
+import subprocess
+import sys
 import threading
 import time
+from types import SimpleNamespace
 import uuid
 
 import pytest
 
 from clo3d_mcp.connection import CLO3DConnection, CLO3DConnectionError
+from clo3d_mcp import ipc
 from clo3d_mcp.ipc import BridgeQueue, PROTOCOL, atomic_json, bridge_lock, comm_directory, read_json
 
 
@@ -133,14 +137,90 @@ def test_duplicate_bridge_lock_rejected(tmp_path):
                 pytest.fail("two consumers")
 
 
-def test_defaults_match_plugin(plugin, monkeypatch):
+@pytest.mark.parametrize("platform", ["darwin", "win32"])
+def test_defaults_match_plugin(plugin, monkeypatch, platform):
     monkeypatch.delenv("CLO3D_MCP_DIR")
+    monkeypatch.setattr(ipc.sys, "platform", platform)
+    monkeypatch.setenv("TMPDIR", "/ignored/temp")
     monkeypatch.delenv("TEMP", raising=False)
     assert comm_directory() == str(Path.home() / "clo3d_mcp")
     monkeypatch.setenv("TEMP", "/some/temp")
-    assert comm_directory() == str(Path("/some/temp") / "clo3d_mcp")
+    expected = Path("/some/temp") if platform == "win32" else Path.home()
+    assert comm_directory() == plugin.comm_directory() == str(expected / "clo3d_mcp")
     monkeypatch.setenv("CLO3D_MCP_DIR", "/custom")
     assert comm_directory() == "/custom"
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS stdio environment regression")
+def test_macos_default_survives_mcp_stdio_environment_filter(plugin, monkeypatch, tmp_path):
+    from mcp.client.stdio import get_default_environment
+    monkeypatch.delenv("CLO3D_MCP_DIR")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("TMPDIR", "/var/folders/dock/temp")
+    monkeypatch.setenv("TEMP", "/another/temp")
+    environment = get_default_environment()
+    assert "TMPDIR" not in environment and "TEMP" not in environment
+    directory = subprocess.check_output([sys.executable, "-c",
+        "from clo3d_mcp.ipc import comm_directory; print(comm_directory())"], env=environment, text=True).strip()
+    assert directory == plugin.comm_directory() == str(tmp_path / "clo3d_mcp")
+
+
+def test_wsl_detection_ignores_posix_temp_variables(monkeypatch, tmp_path):
+    monkeypatch.delenv("CLO3D_MCP_DIR", raising=False)
+    monkeypatch.setattr(ipc.sys, "platform", "linux")
+    monkeypatch.setenv("TMPDIR", "/wrong/tmp")
+    monkeypatch.setenv("TEMP", "/wrong/temp")
+    users = tmp_path / "Users"
+    expected = users / "alice/AppData/Local/Temp/clo3d_mcp"
+    expected.mkdir(parents=True)
+    (users / "Public").mkdir()
+    def path(value):
+        return users if value == "/mnt/c/Users" else Path(value)
+    path.home = Path.home
+    monkeypatch.setattr(ipc, "Path", path)
+    assert comm_directory() == str(expected)
+    monkeypatch.setenv("CLO3D_MCP_DIR", "/explicit/shared")
+    assert comm_directory() == "/explicit/shared"
+
+
+@pytest.mark.parametrize("ready", [False, True])
+def test_server_ping_default_has_one_five_second_deadline(monkeypatch, tmp_path, ready):
+    import clo3d_mcp.connection as transport
+    from clo3d_mcp import server
+    if ready:
+        BridgeQueue(tmp_path).start()  # Metadata survives, but there is no consumer.
+    clock = [0.0]
+    monkeypatch.setattr(transport, "time", SimpleNamespace(
+        monotonic=lambda: clock[0], sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds)))
+    writes = []
+    def publish(path, value):
+        writes.append(path)
+        atomic_json(path, value)
+    monkeypatch.setattr(transport, "atomic_json", publish)
+    monkeypatch.setattr(server, "get_connection", lambda: CLO3DConnection(tmp_path))
+    with pytest.raises(CLO3DConnectionError):
+        server.ping()
+    assert 5 <= clock[0] <= 5 + transport.POLL_INTERVAL * 2
+    assert len(writes) == int(ready)
+
+
+@pytest.mark.parametrize("command,api", [("copy_colorway", "CopyColorway"), ("delete_colorway", "DeleteColorwayItem")])
+def test_colorway_timeout_never_repeats_sdk_call(bridge, monkeypatch, command, api):
+    import clo3d_mcp.connection as transport
+    from clo3d_mcp import server
+    plugin, connection = bridge
+    calls = []
+    def mutate(*args):
+        calls.append(args)
+        time.sleep(.6)
+        return 3
+    setattr(plugin.utility_api, api, mutate)
+    monkeypatch.setattr(transport, "TIMEOUT", .4)
+    monkeypatch.setattr(server, "get_connection", lambda: connection)
+    with pytest.raises(CLO3DConnectionError, match="not retried"):
+        getattr(server, command)(2)
+    assert connection.ping()
+    assert calls == [(2, 0) if command == "copy_colorway" else (2,)]
 
 
 def test_session_restart_reports_unknown_outcome(tmp_path):
