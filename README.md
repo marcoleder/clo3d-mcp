@@ -53,6 +53,12 @@ That gives you `.venv/bin/clo3d-mcp` (`\.venv\Scripts\clo3d-mcp.exe` on Windows)
 
 ## 2. Register the bridge inside CLO3D
 
+An **opt-in native C++ backend** is available in [`cpp/`](cpp/README.md). It keeps
+the same 48 MCP tools and protocol 3, and returns to CLO's event loop between
+commands. Build it with the full CLO 2026.1.224 SDK and Qt 6.10.3, then register
+the binary through Plug-in Manager. The Python setup below remains the default
+during native qualification; only one backend may serve an IPC directory.
+
 The plug-in has to run *inside* CLO. Registering it as a menu item is the least
 fiddly route — one click, no file dialogs.
 
@@ -233,7 +239,12 @@ fallbacks only when no options are supplied.
 
 ## Watching it work
 
-CLO's viewport does not repaint by itself while the bridge is serving. Turn on
+With the native backend, no-path live preview requests repaint without PNG
+capture. An explicit preview path selects snapshot compatibility mode. Native
+`refresh_view` reports a refresh request; `repainted: false` means completion
+has not been confirmed. See [native behavior](cpp/README.md#behavior-and-limits).
+
+CLO's viewport does not repaint by itself while the Python bridge is serving. Turn on
 live preview and it redraws after every change:
 
 > *"Turn on live preview, then cycle the fabric through five colours"*
@@ -312,6 +323,7 @@ sentinel between commands. Neither can release CLO while an API call is blocked.
 | Menu-item bridge | protocol 3; see transport validation report | untested |
 | Script Editor bridge | ❌ thread starves | unverified |
 | Native shim | ABI 2 build/load, exports and AVT tested | MSVC configured; build/load untested |
+| Native C++ bridge (opt-in) | 48/48 live tools; 52 successful calls; [qualification record](docs/cpp-plugin-rewrite-plan.md) | implementation present; unvalidated |
 | `dialog_watcher.py` | ✅ AppleScript | ❌ macOS only |
 
 Windows reports welcome.

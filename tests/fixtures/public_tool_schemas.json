@@ -1,0 +1,691 @@
+{
+  "add_fabric": {
+    "properties": {
+      "file_path": {
+        "title": "File Path",
+        "type": "string"
+      }
+    },
+    "required": [
+      "file_path"
+    ],
+    "title": "add_fabricArguments",
+    "type": "object"
+  },
+  "assign_fabric_to_pattern": {
+    "properties": {
+      "assign_option": {
+        "default": 1,
+        "title": "Assign Option",
+        "type": "integer"
+      },
+      "fabric_index": {
+        "title": "Fabric Index",
+        "type": "integer"
+      },
+      "pattern_index": {
+        "title": "Pattern Index",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "fabric_index",
+      "pattern_index"
+    ],
+    "title": "assign_fabric_to_patternArguments",
+    "type": "object"
+  },
+  "copy_colorway": {
+    "properties": {
+      "colorway_index": {
+        "title": "Colorway Index",
+        "type": "integer"
+      },
+      "copy_option": {
+        "default": 0,
+        "title": "Copy Option",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "colorway_index"
+    ],
+    "title": "copy_colorwayArguments",
+    "type": "object"
+  },
+  "copy_pattern": {
+    "properties": {
+      "pattern_index": {
+        "title": "Pattern Index",
+        "type": "integer"
+      },
+      "x": {
+        "default": 0,
+        "title": "X",
+        "type": "number"
+      },
+      "y": {
+        "default": 0,
+        "title": "Y",
+        "type": "number"
+      }
+    },
+    "required": [
+      "pattern_index"
+    ],
+    "title": "copy_patternArguments",
+    "type": "object"
+  },
+  "create_pattern": {
+    "properties": {
+      "points": {
+        "items": {
+          "items": {
+            "type": "number"
+          },
+          "type": "array"
+        },
+        "title": "Points",
+        "type": "array"
+      }
+    },
+    "required": [
+      "points"
+    ],
+    "title": "create_patternArguments",
+    "type": "object"
+  },
+  "delete_colorway": {
+    "properties": {
+      "colorway_index": {
+        "title": "Colorway Index",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "colorway_index"
+    ],
+    "title": "delete_colorwayArguments",
+    "type": "object"
+  },
+  "delete_fabric": {
+    "properties": {
+      "fabric_index": {
+        "title": "Fabric Index",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "fabric_index"
+    ],
+    "title": "delete_fabricArguments",
+    "type": "object"
+  },
+  "delete_pattern": {
+    "properties": {
+      "pattern_index": {
+        "title": "Pattern Index",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "pattern_index"
+    ],
+    "title": "delete_patternArguments",
+    "type": "object"
+  },
+  "export_fbx": {
+    "properties": {
+      "file_path": {
+        "title": "File Path",
+        "type": "string"
+      },
+      "options": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Options"
+      }
+    },
+    "required": [
+      "file_path"
+    ],
+    "title": "export_fbxArguments",
+    "type": "object"
+  },
+  "export_glb": {
+    "properties": {
+      "file_path": {
+        "title": "File Path",
+        "type": "string"
+      },
+      "options": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Options"
+      }
+    },
+    "required": [
+      "file_path"
+    ],
+    "title": "export_glbArguments",
+    "type": "object"
+  },
+  "export_gltf": {
+    "properties": {
+      "file_path": {
+        "title": "File Path",
+        "type": "string"
+      },
+      "options": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Options"
+      }
+    },
+    "required": [
+      "file_path"
+    ],
+    "title": "export_gltfArguments",
+    "type": "object"
+  },
+  "export_obj": {
+    "properties": {
+      "file_path": {
+        "title": "File Path",
+        "type": "string"
+      },
+      "options": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Options"
+      }
+    },
+    "required": [
+      "file_path"
+    ],
+    "title": "export_objArguments",
+    "type": "object"
+  },
+  "export_snapshot": {
+    "properties": {
+      "file_path": {
+        "title": "File Path",
+        "type": "string"
+      }
+    },
+    "required": [
+      "file_path"
+    ],
+    "title": "export_snapshotArguments",
+    "type": "object"
+  },
+  "export_tech_pack": {
+    "properties": {
+      "file_path": {
+        "title": "File Path",
+        "type": "string"
+      },
+      "options": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Options"
+      }
+    },
+    "required": [
+      "file_path"
+    ],
+    "title": "export_tech_packArguments",
+    "type": "object"
+  },
+  "export_thumbnail": {
+    "properties": {
+      "file_path": {
+        "title": "File Path",
+        "type": "string"
+      }
+    },
+    "required": [
+      "file_path"
+    ],
+    "title": "export_thumbnailArguments",
+    "type": "object"
+  },
+  "export_turntable": {
+    "properties": {
+      "file_path": {
+        "title": "File Path",
+        "type": "string"
+      },
+      "height": {
+        "default": 2500,
+        "title": "Height",
+        "type": "integer"
+      },
+      "number_of_images": {
+        "default": 36,
+        "title": "Number Of Images",
+        "type": "integer"
+      },
+      "width": {
+        "default": 2500,
+        "title": "Width",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "file_path"
+    ],
+    "title": "export_turntableArguments",
+    "type": "object"
+  },
+  "flip_pattern": {
+    "properties": {
+      "each": {
+        "default": true,
+        "title": "Each",
+        "type": "boolean"
+      },
+      "horizontal": {
+        "default": true,
+        "title": "Horizontal",
+        "type": "boolean"
+      },
+      "pattern_index": {
+        "title": "Pattern Index",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "pattern_index"
+    ],
+    "title": "flip_patternArguments",
+    "type": "object"
+  },
+  "get_arrangement_list": {
+    "properties": {},
+    "title": "get_arrangement_listArguments",
+    "type": "object"
+  },
+  "get_avatar_genders": {
+    "properties": {},
+    "title": "get_avatar_gendersArguments",
+    "type": "object"
+  },
+  "get_avatars": {
+    "properties": {},
+    "title": "get_avatarsArguments",
+    "type": "object"
+  },
+  "get_colorways": {
+    "properties": {},
+    "title": "get_colorwaysArguments",
+    "type": "object"
+  },
+  "get_fabric_count": {
+    "properties": {},
+    "title": "get_fabric_countArguments",
+    "type": "object"
+  },
+  "get_fabric_for_pattern": {
+    "properties": {
+      "pattern_index": {
+        "title": "Pattern Index",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "pattern_index"
+    ],
+    "title": "get_fabric_for_patternArguments",
+    "type": "object"
+  },
+  "get_fabric_list": {
+    "properties": {},
+    "title": "get_fabric_listArguments",
+    "type": "object"
+  },
+  "get_garment_info": {
+    "properties": {},
+    "title": "get_garment_infoArguments",
+    "type": "object"
+  },
+  "get_pattern_bounding_box": {
+    "properties": {
+      "pattern_index": {
+        "title": "Pattern Index",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "pattern_index"
+    ],
+    "title": "get_pattern_bounding_boxArguments",
+    "type": "object"
+  },
+  "get_pattern_count": {
+    "properties": {},
+    "title": "get_pattern_countArguments",
+    "type": "object"
+  },
+  "get_pattern_info": {
+    "properties": {
+      "pattern_index": {
+        "title": "Pattern Index",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "pattern_index"
+    ],
+    "title": "get_pattern_infoArguments",
+    "type": "object"
+  },
+  "get_pattern_list": {
+    "properties": {},
+    "title": "get_pattern_listArguments",
+    "type": "object"
+  },
+  "get_project_info": {
+    "properties": {},
+    "title": "get_project_infoArguments",
+    "type": "object"
+  },
+  "import_avatar": {
+    "properties": {
+      "apf_path": {
+        "default": "",
+        "title": "Apf Path",
+        "type": "string"
+      },
+      "file_path": {
+        "title": "File Path",
+        "type": "string"
+      }
+    },
+    "required": [
+      "file_path"
+    ],
+    "title": "import_avatarArguments",
+    "type": "object"
+  },
+  "import_fabric": {
+    "properties": {
+      "file_path": {
+        "title": "File Path",
+        "type": "string"
+      }
+    },
+    "required": [
+      "file_path"
+    ],
+    "title": "import_fabricArguments",
+    "type": "object"
+  },
+  "import_file": {
+    "properties": {
+      "file_path": {
+        "title": "File Path",
+        "type": "string"
+      }
+    },
+    "required": [
+      "file_path"
+    ],
+    "title": "import_fileArguments",
+    "type": "object"
+  },
+  "new_project": {
+    "properties": {},
+    "title": "new_projectArguments",
+    "type": "object"
+  },
+  "open_file": {
+    "properties": {
+      "file_path": {
+        "title": "File Path",
+        "type": "string"
+      }
+    },
+    "required": [
+      "file_path"
+    ],
+    "title": "open_fileArguments",
+    "type": "object"
+  },
+  "ping": {
+    "properties": {},
+    "title": "pingArguments",
+    "type": "object"
+  },
+  "refresh_view": {
+    "properties": {},
+    "title": "refresh_viewArguments",
+    "type": "object"
+  },
+  "replace_fabric": {
+    "properties": {
+      "fabric_index": {
+        "title": "Fabric Index",
+        "type": "integer"
+      },
+      "file_path": {
+        "title": "File Path",
+        "type": "string"
+      }
+    },
+    "required": [
+      "fabric_index",
+      "file_path"
+    ],
+    "title": "replace_fabricArguments",
+    "type": "object"
+  },
+  "save_project": {
+    "properties": {
+      "file_path": {
+        "title": "File Path",
+        "type": "string"
+      }
+    },
+    "required": [
+      "file_path"
+    ],
+    "title": "save_projectArguments",
+    "type": "object"
+  },
+  "set_colorway_name": {
+    "properties": {
+      "colorway_index": {
+        "title": "Colorway Index",
+        "type": "integer"
+      },
+      "name": {
+        "title": "Name",
+        "type": "string"
+      }
+    },
+    "required": [
+      "colorway_index",
+      "name"
+    ],
+    "title": "set_colorway_nameArguments",
+    "type": "object"
+  },
+  "set_current_colorway": {
+    "properties": {
+      "colorway_index": {
+        "title": "Colorway Index",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "colorway_index"
+    ],
+    "title": "set_current_colorwayArguments",
+    "type": "object"
+  },
+  "set_fabric_color": {
+    "properties": {
+      "a": {
+        "default": 255,
+        "title": "A",
+        "type": "integer"
+      },
+      "b": {
+        "default": 255,
+        "title": "B",
+        "type": "integer"
+      },
+      "fabric_index": {
+        "title": "Fabric Index",
+        "type": "integer"
+      },
+      "g": {
+        "default": 255,
+        "title": "G",
+        "type": "integer"
+      },
+      "material_face": {
+        "default": 0,
+        "title": "Material Face",
+        "type": "integer"
+      },
+      "r": {
+        "default": 255,
+        "title": "R",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "fabric_index"
+    ],
+    "title": "set_fabric_colorArguments",
+    "type": "object"
+  },
+  "set_live_preview": {
+    "properties": {
+      "enabled": {
+        "default": true,
+        "title": "Enabled",
+        "type": "boolean"
+      },
+      "path": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Path"
+      }
+    },
+    "title": "set_live_previewArguments",
+    "type": "object"
+  },
+  "set_pattern_name": {
+    "properties": {
+      "name": {
+        "title": "Name",
+        "type": "string"
+      },
+      "pattern_index": {
+        "title": "Pattern Index",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "pattern_index",
+      "name"
+    ],
+    "title": "set_pattern_nameArguments",
+    "type": "object"
+  },
+  "set_simulation_quality": {
+    "properties": {
+      "quality": {
+        "title": "Quality",
+        "type": "integer"
+      },
+      "simulation_mode": {
+        "default": 0,
+        "title": "Simulation Mode",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "quality"
+    ],
+    "title": "set_simulation_qualityArguments",
+    "type": "object"
+  },
+  "show_hide_avatar": {
+    "properties": {
+      "show": {
+        "default": true,
+        "title": "Show",
+        "type": "boolean"
+      }
+    },
+    "title": "show_hide_avatarArguments",
+    "type": "object"
+  },
+  "simulate": {
+    "properties": {
+      "steps": {
+        "default": 100,
+        "title": "Steps",
+        "type": "integer"
+      }
+    },
+    "title": "simulateArguments",
+    "type": "object"
+  },
+  "stop_bridge": {
+    "properties": {},
+    "title": "stop_bridgeArguments",
+    "type": "object"
+  }
+}

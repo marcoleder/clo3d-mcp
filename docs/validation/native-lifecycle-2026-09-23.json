@@ -1,0 +1,57 @@
+{
+  "initial_ping": {
+    "backend": "cpp",
+    "in_clo3d": true,
+    "main_thread": true,
+    "pong": true,
+    "qt_version": "6.10.3",
+    "sdk_version": "2026.1.224",
+    "stage": "lifetime_spike"
+  },
+  "repeated_start_same_session": true,
+  "refresh_ping": {
+    "backend": "cpp",
+    "in_clo3d": true,
+    "main_thread": true,
+    "pong": true,
+    "qt_version": "6.10.3",
+    "sdk_version": "2026.1.224",
+    "stage": "lifetime_spike"
+  },
+  "refresh_same_session": true,
+  "stop_result": {
+    "stopped": true
+  },
+  "stop_removed_ready": true,
+  "restart_ping": {
+    "backend": "cpp",
+    "in_clo3d": true,
+    "main_thread": true,
+    "pong": true,
+    "qt_version": "6.10.3",
+    "sdk_version": "2026.1.224",
+    "stage": "lifetime_spike"
+  },
+  "restart_fresh_session": true,
+  "sentinel_removed_ready": true,
+  "sentinel_restart_ping": {
+    "backend": "cpp",
+    "in_clo3d": true,
+    "main_thread": true,
+    "pong": true,
+    "qt_version": "6.10.3",
+    "sdk_version": "2026.1.224",
+    "stage": "lifetime_spike"
+  },
+  "manager_remove_ping": {
+    "backend": "cpp",
+    "in_clo3d": true,
+    "main_thread": true,
+    "pong": true,
+    "qt_version": "6.10.3",
+    "sdk_version": "2026.1.224",
+    "stage": "lifetime_spike"
+  },
+  "exit_ready_removed": true,
+  "exit_lock_released": true
+}

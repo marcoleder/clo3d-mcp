@@ -1,0 +1,22 @@
+{
+  "calls": 100,
+  "mutations": 50,
+  "refresh_requests": 50,
+  "preview_snapshot_calls": 0,
+  "legacy_preview_file_unchanged": true,
+  "menu_input_checks": 5,
+  "round_trip_ms": {
+    "p50": 166.32087499601766,
+    "p95": 166.81049999897368,
+    "max": 173.77641701023094
+  },
+  "menu_automation_ms": [
+    211.81824999803212,
+    173.34945801121648,
+    221.78770900063682,
+    186.87016700278036,
+    176.76108398882207
+  ],
+  "restoration_verified": true,
+  "note": "IPC/menu timings, not camera or paint latency; normal synchronous SDK costs included."
+}
