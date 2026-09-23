@@ -151,3 +151,26 @@ The diagnostics follow-up adds one local support tool, for **48 CLO tools plus
 `export_diagnostics`**. It does not add a CLO handler or change protocol 3.
 The SDK adapter is built once per bridge start and moved into the dispatcher.
 There are now four native test executables, including diagnostics/rotation tests.
+
+### Guided validation of the diagnostics build
+
+[Recorded evidence](validation/native-diagnostics-live-2026-09-23.json) identifies
+the tested Release binary. A 61.9-second read probe completed **364 calls without
+errors**, with no growth in `bridge.log`. The user reported **"Responsive
+throughout"**. Two subsequent passes each exercised **49/49 MCP tools**, with
+**53 successful calls**, zero failures, and 170 output files. Both verified scene
+restoration and stopped the bridge. Diagnostics exported after stop through MCP
+and CLI; ZIP integrity, included-file checksums and the recorded build matched.
+
+The user found editing responsive but could not interact during exports. GLTF
+and tech-pack calls took roughly eight seconds each. The first restoration waited
+for CLO's Open Project dialog (77.90 seconds including confirmation delay); the
+second used the external dialog watcher and restored in 2.76 seconds. The watcher
+confirmed one Open Project dialog and no export dialogs. These runs qualify
+successful operations and user-observed responsiveness between calls, not an
+interactive UI during synchronous SDK exports. The live harness now pauses two
+seconds between test actions, adjustable with `--pause=5` or `--pause=0`.
+
+No fatal crash was induced in CLO and no OS crash reports were present. Crash
+preservation remains covered by forced termination of the offline test harness;
+actual OS dump generation remains an open platform qualification item.

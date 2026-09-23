@@ -8,6 +8,7 @@ Saving/restoring changes CLO's active project path to the backup. A crash or
 blocked native call can prevent restoration; the backup is retained on disk.
 """
 import json
+import math
 import os
 import pathlib
 import queue
@@ -139,6 +140,16 @@ def verify_restoration(server, backup, expected_state):
 
 
 def exercise():
+    pause_s = 2.0
+    for arg in sys.argv[1:]:
+        if arg.startswith("--pause="):
+            try:
+                pause_s = float(arg.split("=", 1)[1])
+            except ValueError:
+                pause_s = -1
+    if not math.isfinite(pause_s) or not 0 <= pause_s <= 60:
+        print("--pause must be a number from 0 to 60 seconds")
+        return 2
     positional = [a for a in sys.argv[1:] if not a.startswith("--")]
     src = pathlib.Path(positional[0] if positional else REPO / "test.zprj")
     if not src.is_file():
@@ -155,6 +166,7 @@ def exercise():
     out.mkdir()
     print(f"garment copy : {garment}")
     print(f"output dir   : {out}\n")
+    print(f"Pause between test actions: {pause_s:g}s (SDK calls can still block CLO)\n")
 
     srv = Server()
     ACTIVE["server"] = srv
@@ -163,6 +175,10 @@ def exercise():
     box = {}
 
     def run(label, tool, args=None, timeout=240, note=""):
+        # Give the user time to interact between actions, including heavy exports.
+        # Keep the wait outside the measured action and its postcondition checks.
+        if pause_s:
+            time.sleep(pause_s)
         count_checks = {
             "create_pattern": ("get_pattern_count", 1),
             "copy_pattern": ("get_pattern_count", 1),
@@ -349,11 +365,11 @@ def exercise():
 
     # ── 5. exports ────────────────────────────────────────────────────────
     print("\n[5] exports")
-    # ExportOBJ opens a modal options dialog: the bridge's poll loop is blocked
-    # until it is confirmed, so allow far longer than a normal call and run
-    # tools/dialog_watcher.py alongside for an unattended run.
+    # Some backends/builds open export dialogs. Confirm them manually or run
+    # tools/dialog_watcher.py alongside; explicit native options avoid this
+    # dialog on the qualified build. Project restoration may still open one.
     run("obj", "export_obj", {"file_path": str(out / "g.obj")},
-        timeout=600, note="(modal dialog - needs confirm)")
+        timeout=600, note="(confirm any SDK dialog)")
     run("obj+opt", "export_obj",
         {"file_path": str(out / "g2.obj"), "options": {"bExportAvatar": False}},
         timeout=600, note="(native options)")
@@ -420,6 +436,7 @@ def main():
         print("Prepared only: no MCP calls or CLO actions were performed.")
         print("See docs/live-test-checklist.md. When CLO is available, run:")
         print("  uv run python tools/live_test.py /absolute/garment.zprj --run-live")
+        print("Actions pause for 2s by default; use --pause=5 for more interaction time.")
         return 0
     ACTIVE.clear()
     status = 1

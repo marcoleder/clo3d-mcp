@@ -113,3 +113,9 @@ publication, CLI use without importing the MCP server, and the local MCP tool
 without any CLO connection. Crash cases are injected into the test harness,
 not into a user's CLO session. Windows dump generation and collection from
 older CLO crash reporters still need qualification on those hosts.
+
+The [guided native live runs](validation/native-diagnostics-live-2026-09-23.json)
+also exercised the local MCP exporter after bridge shutdown and the CLI exporter
+with the bridge stopped. ZIP integrity and every included file's checksum passed;
+session metadata recorded clean shutdown and the correct Release binary. No crash
+was induced in CLO, and no OS crash reports were available during these runs.

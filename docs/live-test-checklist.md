@@ -42,6 +42,14 @@ it does not start an MCP process, contact the bridge, launch CLO or click its UI
 uv run python tools/live_test.py /absolute/path/garment.zprj --run-live
 ```
 
+The harness pauses **two seconds between test actions** so you can interact
+with CLO between them. Use `--pause=5` for longer gaps, or `--pause=0` for a
+throughput run. Pauses are excluded from reported call durations. A synchronous
+SDK export still blocks CLO while it runs, and the Open Project dialog during
+restoration may require confirmation. Pacing does not make those calls
+asynchronous. The harness opens, clears and restores disposable scenes during
+the run; avoid making garment edits until restoration finishes.
+
 The harness discovers the tool list, exercises the two preview tools and all
 export tools, verifies API failure flags, checks selected state postconditions
 and output artifacts, and writes `results.json` in its printed scratch folder.

@@ -1,0 +1,642 @@
+{
+  "date": "2026-09-23",
+  "source_revision": "7b7dd7c6de6578808010774b575a66d74e51afb8",
+  "backend": "cpp",
+  "clo": "2026.1.224",
+  "qt": "6.10.3",
+  "os": "macOS 15.8",
+  "architecture": "arm64",
+  "binary_manifest": {
+    "backend": "cpp",
+    "protocol": 3,
+    "plugin_abi": 1,
+    "target_clo_sdk": "2026.1.224",
+    "qt": "6.10.3",
+    "configuration": "Release",
+    "compiler": "AppleClang 17.0.0.17000604",
+    "binary_sha256": "8690f6864a84ee42ac7c65a538c76f23987f4839fcaa8881600cb45845e8ffab",
+    "sdk_interface_header_sha256": "ec0d4e32011d9f8f157c7b90e97069211c1953d884559397e66339d0063224e6"
+  },
+  "interactive_read_probe": {
+    "date": "2026-09-23",
+    "phase": "interactive_read_only",
+    "seconds": 61.914387208002154,
+    "calls": 364,
+    "errors": 0,
+    "commands": [
+      "get_project_info",
+      "get_pattern_list",
+      "get_fabric_list",
+      "get_colorways",
+      "get_avatars",
+      "ping"
+    ],
+    "round_trip_ms": {
+      "median": 164.87043700180948,
+      "p95": 180.558749998454,
+      "max": 2073.860333999619
+    },
+    "bridge_log_bytes_before": 105885,
+    "bridge_log_bytes_after": 105885,
+    "native_session": "aa3c32a86811494f99c8fffa43634cbf",
+    "user_liveness_observation": "Responsive throughout",
+    "note": "Round-trip protocol latency is not a frame-time or paint-latency measurement."
+  },
+  "runs": [
+    {
+      "iteration": 1,
+      "scratch_directory_name": "clo3d-live-sen5staf",
+      "tools_exercised": 49,
+      "clo_tools": 48,
+      "local_tools": 1,
+      "calls_passed": 53,
+      "calls_failed": 0,
+      "files_produced": 170,
+      "scene_restoration_verified": true,
+      "clean_shutdown": true,
+      "dialog_observation": "Open Project during restoration was confirmed through macOS accessibility; 77.90-second restore call includes the wait for confirmation.",
+      "user_observation": "editing was fine, export blocks because of popup (and popup still displays) lets run one more iteration",
+      "diagnostics": {
+        "exported_after_bridge_stop": true,
+        "included_files": 3,
+        "skipped_files": 0,
+        "crash_reports": 0,
+        "uploaded": false,
+        "zip_crc_and_sha256_checks_passed": true,
+        "build_matches_loaded_binary": true
+      },
+      "calls": [
+        {
+          "tool": "ping",
+          "passed": true,
+          "seconds": 0.0
+        },
+        {
+          "tool": "save_project",
+          "passed": true,
+          "seconds": 0.6116
+        },
+        {
+          "tool": "open_file",
+          "passed": true,
+          "seconds": 3.7967
+        },
+        {
+          "tool": "get_project_info",
+          "passed": true,
+          "seconds": 0.1752
+        },
+        {
+          "tool": "get_garment_info",
+          "passed": true,
+          "seconds": 0.1654
+        },
+        {
+          "tool": "refresh_view",
+          "passed": true,
+          "seconds": 0.1742
+        },
+        {
+          "tool": "set_live_preview",
+          "passed": true,
+          "seconds": 0.1718
+        },
+        {
+          "tool": "get_pattern_count",
+          "passed": true,
+          "seconds": 0.1717
+        },
+        {
+          "tool": "get_pattern_list",
+          "passed": true,
+          "seconds": 0.1221
+        },
+        {
+          "tool": "get_pattern_info",
+          "passed": true,
+          "seconds": 0.1703
+        },
+        {
+          "tool": "get_pattern_bounding_box",
+          "passed": true,
+          "seconds": 0.1714
+        },
+        {
+          "tool": "get_fabric_for_pattern",
+          "passed": true,
+          "seconds": 0.1712
+        },
+        {
+          "tool": "get_arrangement_list",
+          "passed": true,
+          "seconds": 0.1764
+        },
+        {
+          "tool": "get_fabric_count",
+          "passed": true,
+          "seconds": 0.1685
+        },
+        {
+          "tool": "get_fabric_list",
+          "passed": true,
+          "seconds": 0.176
+        },
+        {
+          "tool": "get_colorways",
+          "passed": true,
+          "seconds": 0.1704
+        },
+        {
+          "tool": "get_avatars",
+          "passed": true,
+          "seconds": 0.1679
+        },
+        {
+          "tool": "get_avatar_genders",
+          "passed": true,
+          "seconds": 0.1673
+        },
+        {
+          "tool": "set_pattern_name",
+          "passed": true,
+          "seconds": 0.3345
+        },
+        {
+          "tool": "flip_pattern",
+          "passed": true,
+          "seconds": 0.2314
+        },
+        {
+          "tool": "set_fabric_color",
+          "passed": true,
+          "seconds": 0.1697
+        },
+        {
+          "tool": "assign_fabric_to_pattern",
+          "passed": true,
+          "seconds": 0.1675
+        },
+        {
+          "tool": "set_current_colorway",
+          "passed": true,
+          "seconds": 0.2158
+        },
+        {
+          "tool": "set_colorway_name",
+          "passed": true,
+          "seconds": 0.17
+        },
+        {
+          "tool": "show_hide_avatar",
+          "passed": true,
+          "seconds": 0.1707
+        },
+        {
+          "tool": "set_simulation_quality",
+          "passed": true,
+          "seconds": 0.3268
+        },
+        {
+          "tool": "simulate",
+          "passed": true,
+          "seconds": 1.8743
+        },
+        {
+          "tool": "create_pattern",
+          "passed": true,
+          "seconds": 0.6153
+        },
+        {
+          "tool": "get_pattern_count",
+          "passed": true,
+          "seconds": 0.1628
+        },
+        {
+          "tool": "copy_pattern",
+          "passed": true,
+          "seconds": 0.7232
+        },
+        {
+          "tool": "import_fabric",
+          "passed": true,
+          "seconds": 0.9476
+        },
+        {
+          "tool": "add_fabric",
+          "passed": true,
+          "seconds": 0.5474
+        },
+        {
+          "tool": "replace_fabric",
+          "passed": true,
+          "seconds": 0.1716
+        },
+        {
+          "tool": "copy_colorway",
+          "passed": true,
+          "seconds": 0.7259
+        },
+        {
+          "tool": "import_avatar",
+          "passed": true,
+          "seconds": 2.5181
+        },
+        {
+          "tool": "export_obj",
+          "passed": true,
+          "seconds": 2.0681
+        },
+        {
+          "tool": "export_obj",
+          "passed": true,
+          "seconds": 0.4638
+        },
+        {
+          "tool": "export_fbx",
+          "passed": true,
+          "seconds": 1.2963
+        },
+        {
+          "tool": "export_glb",
+          "passed": true,
+          "seconds": 4.3044
+        },
+        {
+          "tool": "export_gltf",
+          "passed": true,
+          "seconds": 8.3162
+        },
+        {
+          "tool": "export_thumbnail",
+          "passed": true,
+          "seconds": 0.3317
+        },
+        {
+          "tool": "export_snapshot",
+          "passed": true,
+          "seconds": 0.3379
+        },
+        {
+          "tool": "export_turntable",
+          "passed": true,
+          "seconds": 0.448
+        },
+        {
+          "tool": "export_tech_pack",
+          "passed": true,
+          "seconds": 7.8113
+        },
+        {
+          "tool": "delete_pattern",
+          "passed": true,
+          "seconds": 0.5556
+        },
+        {
+          "tool": "delete_fabric",
+          "passed": true,
+          "seconds": 0.7702
+        },
+        {
+          "tool": "delete_colorway",
+          "passed": true,
+          "seconds": 0.4563
+        },
+        {
+          "tool": "save_project",
+          "passed": true,
+          "seconds": 4.2619
+        },
+        {
+          "tool": "new_project",
+          "passed": true,
+          "seconds": 0.5063
+        },
+        {
+          "tool": "import_file",
+          "passed": true,
+          "seconds": 2.4497
+        },
+        {
+          "tool": "open_file",
+          "passed": true,
+          "seconds": 77.905
+        },
+        {
+          "tool": "stop_bridge",
+          "passed": true,
+          "seconds": 0.169
+        },
+        {
+          "tool": "export_diagnostics",
+          "passed": true,
+          "seconds": 0.011
+        }
+      ]
+    },
+    {
+      "iteration": 2,
+      "scratch_directory_name": "clo3d-live-yj1e4jt8",
+      "tools_exercised": 49,
+      "clo_tools": 48,
+      "local_tools": 1,
+      "calls_passed": 53,
+      "calls_failed": 0,
+      "files_produced": 170,
+      "scene_restoration_verified": true,
+      "clean_shutdown": true,
+      "dialog_observation": "Watcher confirmed one Open Project dialog during restoration; no export confirmation was recorded. Restore completed in 2.76 seconds.",
+      "user_observation": "Yes, it felt good, but the problem is that while exporting, I cannot do anything. Maybe we'll need to lower the rate of what we're doing because right now, the garment is loaded again, it's open, and that works. Now it's again a cleared scene. It really works well, but the thing is, maybe in the test, don't make so much at the same time, because there's always a blue overlay loader bar while I'm doing something, and then I cannot do anything. Then it's frozen, of course, while exporting, for example.",
+      "diagnostics": {
+        "exported_after_bridge_stop": true,
+        "included_files": 3,
+        "skipped_files": 0,
+        "crash_reports": 0,
+        "uploaded": false,
+        "zip_crc_and_sha256_checks_passed": true,
+        "build_matches_loaded_binary": true
+      },
+      "calls": [
+        {
+          "tool": "ping",
+          "passed": true,
+          "seconds": 0.0
+        },
+        {
+          "tool": "save_project",
+          "passed": true,
+          "seconds": 0.6255
+        },
+        {
+          "tool": "open_file",
+          "passed": true,
+          "seconds": 2.5262
+        },
+        {
+          "tool": "get_project_info",
+          "passed": true,
+          "seconds": 0.2164
+        },
+        {
+          "tool": "get_garment_info",
+          "passed": true,
+          "seconds": 0.1683
+        },
+        {
+          "tool": "refresh_view",
+          "passed": true,
+          "seconds": 0.162
+        },
+        {
+          "tool": "set_live_preview",
+          "passed": true,
+          "seconds": 0.1679
+        },
+        {
+          "tool": "get_pattern_count",
+          "passed": true,
+          "seconds": 0.1672
+        },
+        {
+          "tool": "get_pattern_list",
+          "passed": true,
+          "seconds": 0.1678
+        },
+        {
+          "tool": "get_pattern_info",
+          "passed": true,
+          "seconds": 0.12
+        },
+        {
+          "tool": "get_pattern_bounding_box",
+          "passed": true,
+          "seconds": 0.166
+        },
+        {
+          "tool": "get_fabric_for_pattern",
+          "passed": true,
+          "seconds": 0.162
+        },
+        {
+          "tool": "get_arrangement_list",
+          "passed": true,
+          "seconds": 0.1615
+        },
+        {
+          "tool": "get_fabric_count",
+          "passed": true,
+          "seconds": 0.1647
+        },
+        {
+          "tool": "get_fabric_list",
+          "passed": true,
+          "seconds": 0.1692
+        },
+        {
+          "tool": "get_colorways",
+          "passed": true,
+          "seconds": 0.1123
+        },
+        {
+          "tool": "get_avatars",
+          "passed": true,
+          "seconds": 0.1719
+        },
+        {
+          "tool": "get_avatar_genders",
+          "passed": true,
+          "seconds": 0.1631
+        },
+        {
+          "tool": "set_pattern_name",
+          "passed": true,
+          "seconds": 0.343
+        },
+        {
+          "tool": "flip_pattern",
+          "passed": true,
+          "seconds": 0.2213
+        },
+        {
+          "tool": "set_fabric_color",
+          "passed": true,
+          "seconds": 0.1738
+        },
+        {
+          "tool": "assign_fabric_to_pattern",
+          "passed": true,
+          "seconds": 0.1758
+        },
+        {
+          "tool": "set_current_colorway",
+          "passed": true,
+          "seconds": 0.1665
+        },
+        {
+          "tool": "set_colorway_name",
+          "passed": true,
+          "seconds": 0.1731
+        },
+        {
+          "tool": "show_hide_avatar",
+          "passed": true,
+          "seconds": 0.1669
+        },
+        {
+          "tool": "set_simulation_quality",
+          "passed": true,
+          "seconds": 0.1724
+        },
+        {
+          "tool": "simulate",
+          "passed": true,
+          "seconds": 1.8555
+        },
+        {
+          "tool": "create_pattern",
+          "passed": true,
+          "seconds": 0.6566
+        },
+        {
+          "tool": "get_pattern_count",
+          "passed": true,
+          "seconds": 0.169
+        },
+        {
+          "tool": "copy_pattern",
+          "passed": true,
+          "seconds": 0.7131
+        },
+        {
+          "tool": "import_fabric",
+          "passed": true,
+          "seconds": 0.8863
+        },
+        {
+          "tool": "add_fabric",
+          "passed": true,
+          "seconds": 0.6284
+        },
+        {
+          "tool": "replace_fabric",
+          "passed": true,
+          "seconds": 0.1642
+        },
+        {
+          "tool": "copy_colorway",
+          "passed": true,
+          "seconds": 0.7716
+        },
+        {
+          "tool": "import_avatar",
+          "passed": true,
+          "seconds": 2.2973
+        },
+        {
+          "tool": "export_obj",
+          "passed": true,
+          "seconds": 2.1313
+        },
+        {
+          "tool": "export_obj",
+          "passed": true,
+          "seconds": 0.463
+        },
+        {
+          "tool": "export_fbx",
+          "passed": true,
+          "seconds": 1.2667
+        },
+        {
+          "tool": "export_glb",
+          "passed": true,
+          "seconds": 4.681
+        },
+        {
+          "tool": "export_gltf",
+          "passed": true,
+          "seconds": 8.4352
+        },
+        {
+          "tool": "export_thumbnail",
+          "passed": true,
+          "seconds": 0.2253
+        },
+        {
+          "tool": "export_snapshot",
+          "passed": true,
+          "seconds": 0.2194
+        },
+        {
+          "tool": "export_turntable",
+          "passed": true,
+          "seconds": 0.4532
+        },
+        {
+          "tool": "export_tech_pack",
+          "passed": true,
+          "seconds": 8.2205
+        },
+        {
+          "tool": "delete_pattern",
+          "passed": true,
+          "seconds": 0.5601
+        },
+        {
+          "tool": "delete_fabric",
+          "passed": true,
+          "seconds": 0.7118
+        },
+        {
+          "tool": "delete_colorway",
+          "passed": true,
+          "seconds": 0.4923
+        },
+        {
+          "tool": "save_project",
+          "passed": true,
+          "seconds": 4.4821
+        },
+        {
+          "tool": "new_project",
+          "passed": true,
+          "seconds": 0.4884
+        },
+        {
+          "tool": "import_file",
+          "passed": true,
+          "seconds": 2.768
+        },
+        {
+          "tool": "open_file",
+          "passed": true,
+          "seconds": 2.7608
+        },
+        {
+          "tool": "stop_bridge",
+          "passed": true,
+          "seconds": 0.1663
+        },
+        {
+          "tool": "export_diagnostics",
+          "passed": true,
+          "seconds": 0.0115
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "Round-trip durations include protocol handshakes, validation, and dialog waits; they are not frame/input latency measurements.",
+    "Synchronous SDK operations still occupy the CLO application thread. The Open Project dialog requires confirmation.",
+    "The second run used tools/dialog_watcher.py for known import/export dialogs. This external test helper is not part of the plugin.",
+    "No fatal crash was induced in CLO. Fatal termination and retained-evidence behavior were tested in the offline native harness.",
+    "No CLO OS crash reports were present; these live runs do not qualify OS dump generation or Windows behavior."
+  ],
+  "cli_export_after_bridge_stop": {
+    "passed": true,
+    "bundle_name": "clo3d-diagnostics-20260923T120655Z-81b02615.zip",
+    "uploaded": false,
+    "zip_crc_and_sha256_checks_passed": true
+  },
+  "follow_up": "The harness now pauses two seconds between test actions, configurable with --pause=SECONDS. These recorded runs preceded that pacing change. Pauses do not make individual SDK exports asynchronous.",
+  "bridge_readiness_removed_after_runs": true
+}
