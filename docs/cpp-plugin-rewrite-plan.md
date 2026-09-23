@@ -174,3 +174,11 @@ seconds between test actions, adjustable with `--pause=5` or `--pause=0`.
 No fatal crash was induced in CLO and no OS crash reports were present. Crash
 preservation remains covered by forced termination of the offline test harness;
 actual OS dump generation remains an open platform qualification item.
+
+The [final paced live run](validation/native-paced-live-2026-09-23.json) tested
+the two-second default between actions: **49/49 tools**, **53 successful calls**,
+zero failures, **174 output files**, and **161.21 seconds** elapsed. The user
+reported **"Yes, pacing feels good"**. Scene restoration, clean bridge shutdown,
+post-stop diagnostics ZIP integrity, checksums and build identity all passed.
+The external watcher confirmed the Open Project restoration dialog. Individual
+SDK exports remain synchronous; pacing provides interaction gaps between them.
