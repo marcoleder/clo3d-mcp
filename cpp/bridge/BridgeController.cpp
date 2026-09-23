@@ -58,10 +58,10 @@ void BridgeController::tick() noexcept {
                 if (queue_.ready() && state_ == State::Starting) state_ = State::Serving;
             }
         } catch (const std::exception& e) {
-            review_.mark({{"command", "bridge_io"}, {"reason", QString::fromUtf8(e.what())}});
+            // ProtocolQueue records uncertainty after dispatch. Startup and
+            // handshake I/O failures cannot establish a scene mutation.
             log(directory_, "tick failed; no replay: " + QString::fromUtf8(e.what()));
         } catch (...) {
-            review_.mark({{"command", "bridge_io"}, {"reason", "Unknown native exception"}});
             log(directory_, "tick failed; unknown exception; no replay");
         }
     }

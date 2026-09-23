@@ -94,8 +94,11 @@ backend switch does not authorize repeating a timed-out mutation.
 - File arguments require absolute paths and existing input files/output parent
   directories. Exports verify nonempty artifacts, format structure and freshness.
   Use a dedicated output directory: freshness scans reject directories over
-  10,000 files before execution. Message envelopes are limited to 16 MiB; large
-  results fail explicitly without truncation or retry.
+  10,000 files before execution. These scans also apply to explicit snapshot
+  preview; default native preview skips artifact validation. Message envelopes
+  are limited to 16 MiB. Oversized reads return a small error and leave edits
+  available. An oversized response after a mutating SDK call returns an error
+  stating that the command may have been applied and requires scene review.
 - The queue scans at most 64 entries per pass, retains one claim, and never
   waits for acknowledgement in a loop. Ordering is best effort within scan
   windows. Startup recovery and cleanup also run in bounded timer turns.
@@ -108,6 +111,9 @@ backend switch does not authorize repeating a timed-out mutation.
   further mutations are blocked. Only loading a distinct saved `.zprj` with a
   verified active path clears review. Reloading the active path is a no-op and
   cannot clear review. This is stricter than some Python setter failures.
+- Startup and handshake write failures are logged without requiring scene
+  review. Failed offers and early rejections retire their unexecuted claims;
+  terminal publication failures after dispatch retain unknown-outcome handling.
 - No automatic timeout retry, cancellation, rollback, or backend fallback.
   Simulation is one synchronous call; imports/exports may open dialogs.
   Coordinate structural edits with the assistant because indices can shift

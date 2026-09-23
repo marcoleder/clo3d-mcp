@@ -37,5 +37,6 @@ private:
     void initializeTick();
     void retireTick();
     void complete(const Offer& offer, const QJsonObject& response);
+    void reject(const Offer& offer, const QString& reason);
 };
 }

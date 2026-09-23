@@ -54,7 +54,7 @@ void Artifacts::verify(const QJsonArray& paths, QSize imageSize, bool requireFre
             if (imageSize.isValid()) require(reader.size() == imageSize, "Turntable dimensions differ from request");
         } else if (ext == "obj") {
             bool vertices = false, faces = false;
-            while (!file.atEnd()) { auto line = file.readLine(); vertices |= line.startsWith("v "); faces |= line.startsWith("f "); }
+            while (!(vertices && faces) && !file.atEnd()) { auto line = file.readLine(); vertices |= line.startsWith("v "); faces |= line.startsWith("f "); }
             require(vertices && faces, "OBJ has no geometry");
         } else if (ext == "fbx") {
             require(head.startsWith("Kaydara FBX Binary") || head.startsWith("; FBX"), "Invalid FBX header");

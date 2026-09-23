@@ -30,9 +30,56 @@ struct Fixture {
         files.write(path("requests/" + id + ".ack"), {{"id", id}, {"session", queue.session()}, {"token", response(id)["token"]}, {"timeout_seconds", remaining}});
     }
 };
+void checkControllerWriteFailures() {
+    for (const QString stage : {"ready", "claimed", "rejected"}) for (bool standardException : {false, true}) {
+        QTemporaryDir dir; BridgeController controller(dir.path()); JsonFiles files; int calls = 0, failures = 0;
+        controller.dispatch = [&](const QJsonObject& request) {
+            CHECK(!controller.review().required()); ++calls;
+            return QJsonObject{{"id", request["id"]}, {"status", "success"}, {"result", QJsonObject{}}};
+        };
+        controller.files().beforeWrite = [&](const QString& path, const QJsonObject& object) {
+            if ((stage == "ready" && path.endsWith("ready.json")) || object["status"] == stage
+                || (stage == "rejected" && object["status"] == "error")) {
+                ++failures;
+                if (standardException) throw std::runtime_error("EACCES");
+                throw 1;
+            }
+        };
+        auto submit = [&](bool stale) {
+            auto id = QUuid::createUuid().toString(QUuid::Id128);
+            files.write(dir.filePath("requests/" + id + ".json"), {{"protocol", 3}, {"id", id},
+                {"session", stale ? "stale" : controller.session()}, {"type", "mutate"},
+                {"params", QJsonObject{}}, {"timeout_seconds", 4}});
+            return id;
+        };
+        controller.start();
+        for (int n = 0; n < 4; ++n) controller.tick();
+        if (stage != "ready") {
+            auto id = submit(stage == "rejected");
+            for (int n = 0; n < 4 && !failures; ++n) controller.tick();
+            CHECK(!QFileInfo::exists(dir.filePath("requests/" + id + ".working")));
+        }
+        CHECK(failures > 0 && calls == 0 && !controller.review().required());
+        CHECK(!QFileInfo::exists(dir.filePath("scene-review-required.json")));
+        controller.files().beforeWrite = {};
+        // Retry readiness on the existing timer, then restart before any further
+        // request cleanup to prove failed offers/rejections left no crash evidence.
+        if (stage == "ready") { controller.tick(); CHECK(controller.state() == BridgeController::State::Serving); }
+        controller.stop(); controller.start();
+        for (int n = 0; n < 4; ++n) controller.tick();
+        CHECK(!controller.review().required());
+        auto id = submit(false); auto response = dir.filePath("responses/" + id + ".json");
+        for (int n = 0; n < 4 && files.read(response).isEmpty(); ++n) controller.tick();
+        CHECK(files.read(response)["status"] == "claimed");
+        files.write(dir.filePath("requests/" + id + ".ack"), {{"id", id}, {"session", controller.session()},
+            {"token", files.read(response)["token"]}, {"timeout_seconds", 4}});
+        controller.tick(); CHECK(calls == 1 && files.read(response)["status"] == "success"); controller.stop();
+    }
+}
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     try {
+        checkControllerWriteFailures();
         for (bool failMarker : {false, true}) {
             Fixture f; auto id = f.submit(); f.offer(id); f.ack(id);
             f.files.beforeWrite = [=](const QString& path, const QJsonObject& object) {
@@ -49,6 +96,13 @@ int main(int argc, char** argv) {
             f.clock += std::chrono::seconds(1); f.tick(true); CHECK(f.calls == 0);
             f.clock += std::chrono::seconds(5); f.tick(true); CHECK(f.calls == 0);
             CHECK(f.response(id)["status"] == "error");
+        }
+        {
+            Fixture f; auto id = f.submit(); f.offer(id); f.clock += std::chrono::seconds(6);
+            f.files.beforeWrite = [](const auto&, const auto& response) { if (response["status"] == "error") throw std::runtime_error("ENOSPC"); };
+            throws([&] { f.tick(); }); CHECK(f.calls == 0 && !f.review.required());
+            CHECK(!QFileInfo::exists(f.path("requests/" + id + ".working")));
+            f.files.beforeWrite = {}; f.queue.close(); f.queue.start(); f.start(); CHECK(!f.review.required());
         }
         for (const auto& remaining : {QJsonValue(true), QJsonValue(-1), QJsonValue("3"), QJsonValue(0)}) {
             Fixture f; auto id = f.submit(); f.offer(id); f.ack(id, remaining); f.tick(); CHECK(f.calls == 0);

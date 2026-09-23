@@ -2,14 +2,72 @@
 #include "CommandDispatcher.h"
 #include "ExportOptions.h"
 #include "Artifacts.h"
+#include "ProtocolQueue.h"
 #include <QCoreApplication>
+#include <QDir>
 #include <QFile>
 #include <QTemporaryDir>
 #include <QJsonDocument>
+#include <QUuid>
 #include <QtEndian>
 
 using namespace clo::bridge;
 void write(const QString& path, QByteArray bytes) { QFile file(path); CHECK(file.open(QIODevice::WriteOnly)); CHECK(file.write(bytes) == bytes.size()); }
+void checkResponseSizeLimit() {
+    QTemporaryDir directory; JsonFiles files; SceneReviewState review(directory.path(), files);
+    ProtocolQueue queue(directory.path(), files, review);
+    SdkAdapter sdk; std::string name; int mutations = 0; bool largePreviewError = false;
+    sdk.available = [] { return true; };
+    sdk.GetPatternCount = [] { return 1u; };
+    sdk.GetPatternPieceName = [&](int) { return name; };
+    sdk.ExportGarmentInformationToStream = [&] { return "{\"name\":\"" + name + "\"}"; };
+    sdk.SetPatternPieceName = [&](int, const std::string& value) { ++mutations; name = value; };
+    sdk.Refresh3DWindow = [&] { if (largePreviewError) throw std::runtime_error(std::string(MaxMessageBytes, 'x')); };
+    CommandDispatcher dispatcher(sdk, review, directory.path());
+    auto tick = [&] { queue.tick([&](const auto& request) { return dispatcher.dispatch(request); }); };
+    queue.start(); for (int n = 0; !queue.ready() && n < 4; ++n) tick(); CHECK(queue.ready());
+    auto call = [&](const QString& type, QJsonObject params = {}) {
+        auto id = QUuid::createUuid().toString(QUuid::Id128);
+        auto request = directory.filePath("requests/" + id);
+        auto response = directory.filePath("responses/" + id + ".json");
+        files.write(request + ".json", {{"protocol", 3}, {"id", id}, {"session", queue.session()},
+            {"type", type}, {"params", params}, {"timeout_seconds", 5}});
+        for (int n = 0; files.read(response).isEmpty() && n < 4; ++n) tick();
+        auto offer = files.read(response); CHECK(offer["status"] == "claimed");
+        files.write(request + ".ack", {{"id", id}, {"session", queue.session()}, {"token", offer["token"]}, {"timeout_seconds", 4}});
+        tick();
+        CHECK(!QFileInfo::exists(request + ".working")); CHECK(!QFileInfo::exists(request + ".ack"));
+        auto result = files.read(response); CHECK(result["id"] == id && result["status"] != "claimed");
+        return result;
+    };
+    auto empty = call("get_pattern_list");
+    // Include the entire envelope: exactly 16 MiB succeeds, one more byte fails.
+    name.assign(MaxMessageBytes - QJsonDocument(empty).toJson(QJsonDocument::Compact).size(), 'a');
+    auto boundary = call("get_pattern_list"); CHECK(boundary["status"] == "success");
+    CHECK(QJsonDocument(boundary).toJson(QJsonDocument::Compact).size() == MaxMessageBytes);
+    name += 'a';
+    auto oversized = call("get_pattern_list"); CHECK(oversized["status"] == "error");
+    CHECK(oversized["message"].toString().contains("16 MiB"));
+    CHECK(!oversized.contains("result") && !oversized.contains("outcome") && !review.required());
+    // UTF-8 byte size, rather than QString length, determines the wire limit.
+    name = QString(MaxMessageBytes / 3, QChar(0x8896)).toStdString();
+    auto garment = call("get_garment_info"); CHECK(garment["status"] == "error");
+    CHECK(garment["message"].toString().contains("16 MiB") && !review.required());
+    CHECK(!QFileInfo::exists(directory.filePath("scene-review-required.json")));
+    CHECK(call("set_pattern_name", {{"pattern_index", 0}, {"name", "after large read"}})["status"] == "success");
+    CHECK(mutations == 1);
+    // A small edit request can produce a huge result via its preview diagnostic.
+    CHECK(call("set_live_preview", {{"enabled", true}})["status"] == "success"); largePreviewError = true;
+    auto edited = call("set_pattern_name", {{"pattern_index", 0}, {"name", "applied"}});
+    CHECK(edited["status"] == "error" && edited["outcome"] == "unknown");
+    CHECK(edited["message"].toString().contains("may have been applied"));
+    CHECK(edited["retry_safe"] == false && edited["scene_review_required"] == true && edited["review_persisted"] == true);
+    CHECK(!edited.contains("result") && mutations == 2 && name == "applied");
+    CHECK(QFileInfo::exists(directory.filePath("scene-review-required.json")));
+    CHECK(call("set_pattern_name", {{"pattern_index", 0}, {"name", "blocked"}})["outcome"] == "unknown");
+    CHECK(mutations == 2 && call("get_pattern_list")["status"] == "success");
+    queue.close();
+}
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     try {
@@ -39,6 +97,7 @@ int main(int argc, char** argv) {
             std::cout << QJsonDocument(QJsonArray::fromStringList(dispatcher.registry().keys())).toJson().toStdString();
             return 0;
         }
+        checkResponseSizeLimit();
         if (argc == 2) {
             QFile fixture(QString::fromLocal8Bit(argv[1])); CHECK(fixture.open(QIODevice::ReadOnly));
             auto contracts = QJsonDocument::fromJson(fixture.readAll()).object();

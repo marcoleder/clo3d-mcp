@@ -85,6 +85,14 @@ void ProtocolQueue::complete(const Offer& offered, const QJsonObject& response) 
         .arg(std::chrono::duration<double, std::milli>(now() - before).count()));
     if (response["review_persisted"] != QJsonValue(false)) JsonFiles::remove(offered.claim);
 }
+void ProtocolQueue::reject(const Offer& offered, const QString& reason) {
+    try { complete(offered, error(offered.request["id"].toString(), reason)); }
+    catch (...) {
+        // No SDK entry: do not leave evidence of an unknown mutation for restart.
+        JsonFiles::remove(offered.claim);
+        throw;
+    }
+}
 void ProtocolQueue::tick(const Dispatch& dispatch, bool deferred) {
     if (phase_ == Phase::Closed) return;
     if (phase_ != Phase::Serving) { initializeTick(); return; }
@@ -102,11 +110,11 @@ void ProtocolQueue::tick(const Dispatch& dispatch, bool deferred) {
         auto offered = std::move(*offer_);
         offer_.reset();
         if (!JsonFiles::remove(ackPath)) {
-            complete(offered, error(id, "Cannot consume acknowledgement; request was not executed"));
+            reject(offered, "Cannot consume acknowledgement; request was not executed");
             return;
         }
         if (expired || now() >= offered.deadline) {
-            complete(offered, error(id, "Request acknowledgement expired before execution"));
+            reject(offered, "Request acknowledgement expired before execution");
             return;
         }
         try { complete(offered, dispatch(offered.request)); }
@@ -143,9 +151,10 @@ void ProtocolQueue::tick(const Dispatch& dispatch, bool deferred) {
     else if (!duration(request["timeout_seconds"])) reason = "Invalid relative request timeout";
     Offer offered{request, claim, uuid(), now(), {}};
     offered.request["id"] = id;
-    if (!reason.isEmpty()) { complete(offered, error(id, reason)); return; }
+    if (!reason.isEmpty()) { reject(offered, reason); return; }
     offered.deadline = offered.started + seconds(request["timeout_seconds"].toDouble());
-    files_.write(responsePath, {{"id", id}, {"status", "claimed"}, {"token", offered.token}});
+    try { files_.write(responsePath, {{"id", id}, {"status", "claimed"}, {"token", offered.token}}); }
+    catch (...) { JsonFiles::remove(claim); throw; } // Permission was never offered.
     offer_ = std::move(offered);
 }
 void ProtocolQueue::close() noexcept {

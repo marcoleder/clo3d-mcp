@@ -64,6 +64,10 @@ AppleClang **17.0.0.17000604**, deployment target **15.0**.
   readiness ownership, nested reentry, strict values/options, unknown imports,
   recovery identity including symlinks, native/snapshot preview, output
   structure/freshness, glTF resources and tech-pack sidecars.
+- Review regression tests cover exact-limit and oversized UTF-8 responses,
+  successful edits after oversized reads, bounded uncertain-mutation errors,
+  and startup/handshake/rejection write failures without false scene review,
+  including restart immediately after the failure.
 - [Full live run](validation/native-live-2026-09-23.json): **48/48 tools**, **52
   successful calls**, **zero failures**, and **170 files produced**. All eight
   export tools passed, including tech-pack project sidecars and referenced

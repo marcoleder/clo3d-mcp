@@ -2,6 +2,7 @@
 #include "Artifacts.h"
 #include <QElapsedTimer>
 #include <QFileInfo>
+#include <QJsonDocument>
 #include <QThread>
 #include <QCoreApplication>
 
@@ -76,6 +77,14 @@ QJsonObject CommandDispatcher::dispatch(const QJsonObject& request) noexcept {
     } catch (...) {
         if (context.entered) uncertain("Unknown native exception after SDK dispatch");
         else response["message"] = "Unknown native exception";
+    }
+    // Bound the complete UTF-8 envelope before publication, while mutation
+    // entry is still known. A large read must not become an uncertain edit.
+    if (QJsonDocument(response).toJson(QJsonDocument::Compact).size() > MaxMessageBytes) {
+        response = {{"id", id}, {"status", "error"}};
+        const QString message = "JSON response exceeds 16 MiB limit";
+        if (context.entered) uncertain(message + "; command may have been applied");
+        else response["message"] = message;
     }
     log(directory_, QString("id=%1 command=%2 status=%3 sdk_validation_ms=%4 review=%5")
         .arg(id.toString(), command, response["status"].toString()).arg(time.elapsed()).arg(review_.required()));
