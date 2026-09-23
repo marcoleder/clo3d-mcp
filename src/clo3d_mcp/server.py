@@ -626,3 +626,22 @@ def stop_bridge() -> dict:
     tools. Cannot interrupt an in-progress native call or a modal dialog.
     """
     return _send("stop_bridge")
+
+
+@mcp.tool()
+def export_diagnostics(output_dir: str | None = None, crash_directory: str | None = None,
+                       max_total_mb: int = 512) -> dict:
+    """Save a local ZIP of bridge logs, last-command metadata and available CLO crash reports.
+
+    Works while CLO is stopped or crashed; does not contact CLO or upload files.
+    Returns the ZIP path, findings and any omitted/unavailable evidence. The ZIP
+    contains report.txt and a checksummed manifest. Logs/dumps may contain private
+    paths or memory; review them before sharing manually.
+
+    Args:
+        output_dir: Absolute destination directory; defaults to the bridge's diagnostics/exports directory.
+        crash_directory: Optional additional dedicated directory of crash reports/dumps.
+        max_total_mb: Maximum included file bytes in MiB, 1–16384. Oversized files are listed as omitted, never truncated silently.
+    """
+    from clo3d_mcp.diagnostics import export_bundle
+    return export_bundle(output_dir, crash_directory, max_total_mb)

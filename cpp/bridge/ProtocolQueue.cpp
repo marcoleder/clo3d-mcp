@@ -79,7 +79,7 @@ void ProtocolQueue::complete(const Offer& offered, const QJsonObject& response) 
     auto id = offered.request["id"].toString();
     auto before = now();
     files_.write(QDir(responses_).filePath(id + ".json"), response);
-    log(directory_, QString("session=%1 id=%2 status=%3 claim_to_response_ms=%4 publish_ms=%5")
+    if (response["status"] == "error" || debugLogging()) log(directory_, QString("session=%1 id=%2 status=%3 claim_to_response_ms=%4 publish_ms=%5")
         .arg(session_, id, response["status"].toString())
         .arg(std::chrono::duration<double, std::milli>(now() - offered.started).count())
         .arg(std::chrono::duration<double, std::milli>(now() - before).count()));

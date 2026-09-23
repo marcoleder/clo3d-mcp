@@ -59,6 +59,11 @@ commands. Build it with the full CLO 2026.1.224 SDK and Qt 6.10.3, then register
 the binary through Plug-in Manager. The Python setup below remains the default
 during native qualification; only one backend may serve an IPC directory.
 
+Both backends also have a local **`export_diagnostics`** MCP tool (49 tools total).
+It exports a ZIP of bridge logs and available crash reports even when CLO is
+down. The terminal equivalent is `clo3d-mcp diagnostics`; it prints the saved
+path and never uploads anything. See [local diagnostics](docs/diagnostics.md).
+
 The plug-in has to run *inside* CLO. Registering it as a menu item is the least
 fiddly route — one click, no file dialogs.
 
@@ -203,7 +208,7 @@ stop-file command above is also available when the MCP client has exited.
 
 ---
 
-## The 48 tools
+## The 48 CLO tools and local diagnostics
 
 <details>
 <summary>Full list</summary>
@@ -239,6 +244,8 @@ the current two-argument form. The native plugin requires the matching 2026.1 SD
 **Import** — `import_file`
 
 **Session** — `ping` `refresh_view` `set_live_preview` `stop_bridge`
+
+**Local support** — `export_diagnostics` (works without a running CLO bridge)
 
 \* AVT import needs native shim ABI 2. FBX/tech pack and export options need the
 [native shim](#optional-native-shim) on the tested CLO build. GLB/glTF have dialog

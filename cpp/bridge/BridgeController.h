@@ -1,6 +1,7 @@
 #pragma once
 #include "PlatformLock.h"
 #include "ProtocolQueue.h"
+#include "SessionDiagnostics.h"
 #include <QObject>
 #include <QTimer>
 
@@ -21,12 +22,14 @@ public:
     ProtocolQueue::Dispatch dispatch;
     std::function<bool()> available = [] { return true; };
     std::function<bool()> deferred = [] { return false; };
+    QJsonObject buildMetadata;
 private:
     QString directory_;
     PlatformLock lock_;
     JsonFiles files_;
     SceneReviewState review_;
     ProtocolQueue queue_;
+    SessionDiagnostics diagnostics_;
     QTimer timer_;
     State state_ = State::Stopped;
     bool executing_ = false;

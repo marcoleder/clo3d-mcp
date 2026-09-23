@@ -86,8 +86,10 @@ QJsonObject CommandDispatcher::dispatch(const QJsonObject& request) noexcept {
         if (context.entered) uncertain(message + "; command may have been applied");
         else response["message"] = message;
     }
-    log(directory_, QString("id=%1 command=%2 status=%3 sdk_validation_ms=%4 review=%5")
-        .arg(id.toString(), command, response["status"].toString()).arg(time.elapsed()).arg(review_.required()));
+    if (response["status"] == "error" || debugLogging())
+        log(directory_, QString("id=%1 command=%2 status=%3 sdk_validation_ms=%4 review=%5 message=%6")
+            .arg(id.toString(), command, response["status"].toString()).arg(time.elapsed()).arg(review_.required())
+            .arg(response["message"].toString().left(2048)));
     return response;
 }
 }

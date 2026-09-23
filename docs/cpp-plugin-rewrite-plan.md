@@ -23,6 +23,7 @@ in [`cpp/README.md`](../cpp/README.md).
 | Export options/artifacts | Constructor defaults and the shim's exact option allowlist; direct explicit-option OBJ/FBX/GLB/glTF, turntable colorway overload, tech pack JSON and sidecars, nested snapshots, output structure and freshness checks. |
 | Preview | Native refresh returns to the host loop without capturing images. Explicit path selects snapshot mode; no-path calls reset it. Failed automatic capture adds `preview_error` to successful mutation results. Ping exposes refresh/capture counters. |
 | Build/package | Separate shim, core, command library, plugin, queue harness and three native test executables; exact Qt 6.10.3; versioned binary, checksum/version manifest and notices; macOS host-framework retargeting and ad-hoc signing. |
+| Diagnostics | Bounded rotating logs, opt-in success timings, atomic session/last-command breadcrumbs, unclean-session preservation, and an external local ZIP exporter available through CLI or MCP even after CLO exits. Release symbols are retained for source-level crash analysis. See [diagnostics](diagnostics.md). |
 | Client compatibility | Frozen 48 input schemas and executable Python/native handler comparisons. Simulation mode now defaults to automatic (GPU for quality 3); existing explicit integer modes remain valid. `connection.py` retains one publication and a five-second ping deadline. Both backends use a fixed macOS home directory independent of temp environment variables. |
 
 ## Lifecycle prerequisite: passed before handler porting
@@ -145,3 +146,8 @@ following release gates from the specification remain open:
 No simulation chunking, background SDK calls, socket transport, progress
 statuses or automatic timeout recovery were introduced. These remain separate
 experiments as specified in the design.
+
+The diagnostics follow-up adds one local support tool, for **48 CLO tools plus
+`export_diagnostics`**. It does not add a CLO handler or change protocol 3.
+The SDK adapter is built once per bridge start and moved into the dispatcher.
+There are now four native test executables, including diagnostics/rotation tests.

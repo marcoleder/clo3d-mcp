@@ -28,7 +28,8 @@ def test_stdio_discovery_success_and_handler_error(bridge):
                 listing = await session.list_tools()
                 names = {tool.name for tool in listing.tools}
                 assert "stop_bridge" in names
-                assert len(names) == 48
+                assert len(names) == 49
+                assert "export_diagnostics" in names
                 assert not (await session.call_tool("ping", {})).isError
                 result = await session.call_tool("simulate", {"steps": 1})
                 assert result.isError

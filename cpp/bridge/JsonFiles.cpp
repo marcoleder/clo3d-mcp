@@ -4,6 +4,8 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
+#include <QMutex>
+#include <QMutexLocker>
 #include <QSaveFile>
 #include <stdexcept>
 #ifdef _WIN32
@@ -44,10 +46,27 @@ bool JsonFiles::claim(const QString& pending, const QString& working) noexcept {
 }
 void log(const QString& directory, const QString& message) noexcept {
     try {
-        QFile file(QDir(directory).filePath("bridge.log"));
-        if (file.open(QIODevice::WriteOnly | QIODevice::Append))
-            file.write((QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)
-                        + " [cpp] " + message + '\n').toUtf8());
+        static QMutex mutex;
+        QMutexLocker guard(&mutex);
+        if (!QDir().mkpath(directory)) return;
+        const auto path = QDir(directory).filePath("bridge.log");
+        // Bound even exception strings and reject forged multiline log entries.
+        auto line = (QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)
+            + " [cpp] " + message.left(4096).replace('\n', ' ').replace('\r', ' ') + '\n').toUtf8();
+        if (QFileInfo(path).size() + line.size() > MaxLogBytes) {
+            // If rotation fails (disk full/locked), skip logging instead of growing.
+            if (!JsonFiles::remove(path + "." + QString::number(LogBackups))) return;
+            for (int i = LogBackups - 1; i >= 0; --i) {
+                auto from = i ? path + "." + QString::number(i) : path;
+                if (QFileInfo::exists(from) && !QFile::rename(from, path + "." + QString::number(i + 1))) return;
+            }
+        }
+        QFile file(path);
+        if (file.open(QIODevice::WriteOnly | QIODevice::Append)) {
+            file.write(line);
+            file.flush(); // Close/flush on every record, including errors before a crash.
+        }
     } catch (...) {} // Diagnostics cannot stop the service.
 }
+bool debugLogging() noexcept { return qEnvironmentVariableIntValue("CLO3D_MCP_DEBUG") == 1; }
 }

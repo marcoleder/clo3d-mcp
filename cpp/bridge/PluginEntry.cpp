@@ -3,6 +3,7 @@
 #include "CommandDispatcher.h"
 #include <QApplication>
 #include <QPointer>
+#include <QFile>
 #include <QThread>
 #include <stdexcept>
 #include <memory>
@@ -17,6 +18,7 @@
 namespace {
 using namespace clo::bridge;
 QPointer<BridgeController> controller;
+QString pluginPath;
 void pinLibrary() {
     // A process-lifetime reference prevents host Refresh/Remove from unloading
     // timer code. Deliberately never released: upgrading requires a CLO restart.
@@ -27,10 +29,14 @@ void pinLibrary() {
     if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
                            reinterpret_cast<LPCWSTR>(&pinLibrary), &module))
         throw std::runtime_error("Cannot retain plugin library");
+    wchar_t path[32768];
+    auto length = GetModuleFileNameW(module, path, 32768);
+    if (length > 0 && length < 32768) pluginPath = QString::fromWCharArray(path, length);
 #else
     Dl_info info{};
     if (!dladdr(reinterpret_cast<void*>(&pinLibrary), &info) || !dlopen(info.dli_fname, RTLD_NOW | RTLD_LOCAL))
         throw std::runtime_error("Cannot retain plugin library");
+    pluginPath = QFile::decodeName(info.dli_fname);
 #endif
     pinned = true;
 }
@@ -45,11 +51,14 @@ CLO_PLUGIN_EXPORT void DoFunction() {
         pinLibrary();
         if (!controller) {
             controller = new BridgeController(commDirectory(), app);
-            controller->available = hostSdk().available;
             controller->deferred = [] { return QApplication::activeModalWidget() != nullptr; };
         }
         if (controller->state() == BridgeController::State::Stopped) {
-            auto dispatcher = std::make_shared<CommandDispatcher>(hostSdk(), controller->review(), commDirectory());
+            auto sdk = hostSdk();
+            controller->available = sdk.available;
+            controller->buildMetadata = JsonFiles{}.read(pluginPath + ".json");
+            controller->buildMetadata["plugin_path"] = pluginPath;
+            auto dispatcher = std::make_shared<CommandDispatcher>(std::move(sdk), controller->review(), commDirectory());
             controller->dispatch = [dispatcher](const auto& request) { return dispatcher->dispatch(request); };
         }
         controller->start();

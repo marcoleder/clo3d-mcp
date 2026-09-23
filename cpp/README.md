@@ -28,6 +28,8 @@ macOS produces `libclo_mcp_plugin_v1.dylib`, a checksum/version manifest beside
 it, and `NOTICE`/`LICENSE`. Its load commands resolve CLOAPIInterface and Qt to
 CLO's existing frameworks; the build signs the retargeted binary ad hoc. Do not
 bundle another Qt or CLO runtime. The deployment target defaults to macOS 15.0.
+Release builds also retain matching `.dSYM` (macOS) or `.pdb` (MSVC) symbols for
+crash analysis. Archive those alongside the binary and manifest for each release.
 
 Windows uses matching x64 Qt/MSVC `/MD` and a Release build. The plugin exports
 the SDK's C entry points explicitly. Windows builds, native byte-range locking,
@@ -65,7 +67,8 @@ CLO_NATIVE_HARNESS="$PWD/cpp/build-offline/clo_queue_harness" uv run pytest test
    Defaults are `%TEMP%/clo3d_mcp` on Windows and `~/clo3d_mcp` on macOS.
    macOS ignores `TEMP` and `TMPDIR` so MCP stdio filtering cannot change the path.
 4. Native ping reports `backend: cpp`, Qt/SDK versions and scene-review state.
-   The unchanged 48-tool server now sends its commands to the native backend.
+   The 48 CLO tools send commands to the native backend; the additional local
+   `export_diagnostics` tool exports support evidence without calling CLO.
 
 The plugin retains a process-lifetime library reference. Removing or refreshing
 the menu entry cannot unload active timer code; removal does **not** stop the
@@ -121,6 +124,16 @@ backend switch does not authorize repeating a timed-out mutation.
   Simulation is one synchronous call; imports/exports may open dialogs.
   Coordinate structural edits with the assistant because indices can shift
   between commands. Camera interaction does not reserve scene objects.
+
+## Logs and support bundles
+
+Native logs rotate at 1 MiB with three backups. Successful-command timing logs
+require `CLO3D_MCP_DEBUG=1` in CLO's environment; errors and lifecycle events are
+always logged. Atomic last-command/session breadcrumbs remain enabled without
+debug logging, and unclean sessions are preserved before a restart overwrites
+their metadata. `clo3d-mcp diagnostics` or the local `export_diagnostics` MCP
+tool creates a ZIP containing retained logs and available OS crash reports.
+No upload occurs. See [diagnostics and crash-report limitations](../docs/diagnostics.md).
 
 Read the [implementation and qualification record](../docs/cpp-plugin-rewrite-plan.md)
 before selecting native as your default. Existing Python-only diagnostic commands

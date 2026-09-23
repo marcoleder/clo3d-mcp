@@ -29,7 +29,8 @@ def wait_for(predicate, seconds=3):
 
 
 @pytest.fixture
-def native(tmp_path):
+def native(tmp_path, monkeypatch):
+    monkeypatch.delenv("CLO3D_MCP_DEBUG", raising=False)
     process = subprocess.Popen([str(HARNESS), str(tmp_path)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     client = CLO3DConnection(tmp_path)
     wait_for(lambda: client.connected or process.poll() is not None)
@@ -167,12 +168,62 @@ def test_restart_abandoned_claim_requires_review(tmp_path):
             process.wait()
 
 
-def test_every_public_tool_has_a_native_handler():
+def test_every_clo_tool_has_a_native_handler():
     import asyncio
     from clo3d_mcp.server import mcp
-    actual = {t.name for t in asyncio.run(mcp.list_tools())}
+    actual = {t.name for t in asyncio.run(mcp.list_tools())} - {"export_diagnostics"}
     catalog = HARNESS.with_name("clo_command_tests" + HARNESS.suffix)
     names = json.loads(subprocess.check_output([str(catalog), "--registry"]))
     aliases = {"save_project": "save_file", "get_pattern_bounding_box": "get_bounding_box",
                "assign_fabric_to_pattern": "assign_fabric"}
     assert set(names) == {aliases.get(name, name) for name in actual}
+
+
+def test_native_breadcrumb_survives_kill_and_is_preserved_on_restart(native, monkeypatch):
+    from clo3d_mcp import diagnostics
+    client, process, directory = native
+    monkeypatch.setattr(diagnostics, "_crash_locations", lambda _: [])
+    old_session = read_json(directory / "native-session.json")["session"]
+    with concurrent.futures.ThreadPoolExecutor() as pool:
+        future = pool.submit(client.send_command, "slow", {"secret": "not-for-support"}, timeout=.5)
+        wait_for(lambda: (read_json(directory / "last-command.json") or {}).get("phase") == "dispatching")
+        process.kill(); process.wait(3)
+        with pytest.raises(CLO3DConnectionError):
+            future.result(3)
+    command = read_json(directory / "last-command.json")
+    assert command["command"] == "slow" and "params" not in command
+    result = diagnostics.export_bundle(directory=directory)
+    assert Path(result["file_path"]).is_file() and not result["uploaded"]
+    restarted = subprocess.Popen([str(HARNESS), str(directory)])
+    try:
+        wait_for(lambda: (read_json(directory / "native-session.json") or {}).get("session") != old_session)
+        assert client.ping()
+        incidents = list((directory / "diagnostics/incidents").glob("*/last-command.json"))
+        assert len(incidents) == 1 and read_json(incidents[0]) == command
+        assert "not-for-support" not in incidents[0].read_text()
+        client.send_command("stop_bridge"); restarted.wait(3)
+        assert read_json(directory / "native-session.json")["clean_shutdown"] is True
+    finally:
+        if restarted.poll() is None:
+            restarted.kill(); restarted.wait()
+
+
+def test_success_logging_is_opt_in(native):
+    client, _, directory = native
+    assert client.ping()
+    log = directory / "bridge.log"
+    before = log.read_bytes()
+    client.send_command("echo", {"value": "test"})
+    assert log.read_bytes() == before
+
+
+def test_debug_logging_can_be_enabled(tmp_path):
+    process = subprocess.Popen([str(HARNESS), str(tmp_path)], env={**os.environ, "CLO3D_MCP_DEBUG": "1"})
+    try:
+        client = CLO3DConnection(tmp_path)
+        assert client.ping()
+        assert "claim_to_response_ms=" in (tmp_path / "bridge.log").read_text()
+        client.send_command("stop_bridge"); process.wait(3)
+    finally:
+        if process.poll() is None:
+            process.kill(); process.wait()

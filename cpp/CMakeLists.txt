@@ -85,7 +85,7 @@ if(CLO_BUILD_NATIVE_PLUGIN OR CLO_BUILD_NATIVE_TESTS)
     find_package(Qt6 6.10.3 EXACT REQUIRED COMPONENTS Core Gui)
     add_library(clo_bridge_core STATIC
         bridge/PlatformLock.cpp bridge/JsonFiles.cpp bridge/SceneReviewState.cpp
-        bridge/ProtocolQueue.cpp bridge/BridgeController.cpp)
+        bridge/ProtocolQueue.cpp bridge/BridgeController.cpp bridge/SessionDiagnostics.cpp)
     target_compile_features(clo_bridge_core PUBLIC cxx_std_17)
     target_include_directories(clo_bridge_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/bridge")
     target_link_libraries(clo_bridge_core PUBLIC Qt6::Core)
@@ -121,9 +121,22 @@ if(CLO_BUILD_NATIVE_PLUGIN)
     set_target_properties(clo_mcp_plugin PROPERTIES OUTPUT_NAME "clo_mcp_plugin_v1"
         CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON
         MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
+    # Keep optimized Release behavior, with matching symbols for crash analysis.
+    foreach(target IN ITEMS clo_bridge_core clo_bridge_commands clo_mcp_plugin)
+        if(MSVC)
+            target_compile_options(${target} PRIVATE /Zi)
+        else()
+            target_compile_options(${target} PRIVATE -g)
+        endif()
+    endforeach()
+    if(MSVC)
+        target_link_options(clo_mcp_plugin PRIVATE /DEBUG)
+    endif()
     if(APPLE)
+        find_program(CLO_DSYMUTIL dsymutil REQUIRED)
         target_compile_definitions(clo_mcp_plugin PRIVATE CLO_API_INTERFACE_STATIC_BUILD)
         add_custom_command(TARGET clo_mcp_plugin POST_BUILD
+            COMMAND ${CLO_DSYMUTIL} "$<TARGET_FILE:clo_mcp_plugin>" -o "$<TARGET_FILE:clo_mcp_plugin>.dSYM"
             COMMAND ${CMAKE_COMMAND} -DPLUGIN=$<TARGET_FILE:clo_mcp_plugin>
                 -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RetargetHost.cmake")
     endif()
@@ -143,6 +156,9 @@ if(CLO_BUILD_NATIVE_TESTS)
     add_executable(clo_protocol_tests tests/ProtocolTests.cpp)
     target_link_libraries(clo_protocol_tests PRIVATE clo_bridge_core)
     add_test(NAME native_protocol COMMAND clo_protocol_tests)
+    add_executable(clo_diagnostics_tests tests/DiagnosticsTests.cpp)
+    target_link_libraries(clo_diagnostics_tests PRIVATE clo_bridge_core)
+    add_test(NAME native_diagnostics COMMAND clo_diagnostics_tests)
     add_executable(clo_command_tests tests/CommandTests.cpp)
     target_link_libraries(clo_command_tests PRIVATE clo_bridge_commands)
     add_test(NAME native_commands COMMAND clo_command_tests "${CMAKE_CURRENT_SOURCE_DIR}/../tests/fixtures/result_contracts.json")

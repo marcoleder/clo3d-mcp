@@ -134,6 +134,41 @@
     "title": "delete_patternArguments",
     "type": "object"
   },
+  "export_diagnostics": {
+    "properties": {
+      "crash_directory": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Crash Directory"
+      },
+      "max_total_mb": {
+        "default": 512,
+        "title": "Max Total Mb",
+        "type": "integer"
+      },
+      "output_dir": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Output Dir"
+      }
+    },
+    "title": "export_diagnosticsArguments",
+    "type": "object"
+  },
   "export_fbx": {
     "properties": {
       "file_path": {

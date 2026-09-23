@@ -29,7 +29,7 @@ def test_public_tool_input_contract_is_frozen():
     assert actual == json.loads((Path(__file__).parent / "fixtures/public_tool_schemas.json").read_text())
 
 
-def test_every_public_tool_dispatches_to_a_python_handler(plugin, monkeypatch):
+def test_every_clo_tool_dispatches_to_a_python_handler(plugin, monkeypatch):
     from clo3d_mcp import server
     commands = []
     def send(command, params=None):
@@ -39,9 +39,11 @@ def test_every_public_tool_dispatches_to_a_python_handler(plugin, monkeypatch):
     monkeypatch.setattr(server, "_send", send)
     async def check():
         tools = await server.mcp.list_tools()
-        assert len(tools) == 48
+        assert len(tools) == 49
         examples = {"string": "fixture", "integer": 0, "number": 0, "boolean": False, "array": [], "object": {}}
         for tool in tools:
+            if tool.name == "export_diagnostics":
+                continue  # Local support tool, tested without a live bridge.
             schema = tool.inputSchema
             params = {key: examples[schema["properties"][key]["type"]] for key in schema.get("required", [])}
             before = len(commands)

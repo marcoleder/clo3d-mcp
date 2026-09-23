@@ -392,6 +392,8 @@ def exercise():
     if restored:
         ACTIVE.pop("backup")
         ACTIVE["stopped"] = run("stop", "stop_bridge")[0]
+    if "export_diagnostics" in all_tools:
+        run("diagnostics", "export_diagnostics", {"output_dir": str(scratch / "diagnostics")})
     called = {r[0] for r in results}
     passed = [r for r in results if r[1]]
     failed = [r for r in results if not r[1]]
