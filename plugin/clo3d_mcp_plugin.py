@@ -1,5 +1,7 @@
+import inspect
 import json
 import os
+import re
 import sys
 import time
 import threading
@@ -795,6 +797,28 @@ def handle_import_fabric(params):
 
 # -- Simulation --
 
+def _single_argument_api(api):
+    """Select a legacy overload from metadata, never by retrying a mutation."""
+    try:
+        signature = inspect.signature(api)
+    except (TypeError, ValueError):
+        # pybind functions often expose their signatures only in __doc__.
+        name = getattr(api, "__name__", "")
+        signatures = re.findall(r"^\s*(?:\d+\.\s*)?" + re.escape(name)
+                                + r"\(([^\n()]*)\)\s*->", api.__doc__ or "", re.MULTILINE) if name else []
+        # Only positively identified one-int signatures authorize a legacy call.
+        return bool(signatures) and all(re.fullmatch(r"\s*\w+\s*:\s*int\s*", args) for args in signatures)
+    try:
+        signature.bind(0, 0)
+        return False
+    except TypeError:
+        try:
+            signature.bind(0)
+            return True
+        except TypeError:
+            return False
+
+
 def handle_simulate(params):
     steps = params.get("steps", 100)
     if not utility_api.Simulate(steps):
@@ -807,8 +831,16 @@ def handle_set_simulation_quality(params):
     # quality: 0=Normal 1=Animation(Stable) 2=Fitting(Accurate) 3=FAST(GPU)
     # simulationMode: 0=CPU 1=FAST(GPU)
     quality = params["quality"]
-    simulation_mode = params.get("simulation_mode", 0)
-    utility_api.SetSimulationQuality(quality, simulation_mode)
+    default_mode = 1 if quality == 3 else 0
+    simulation_mode = params.get("simulation_mode")
+    if simulation_mode is None:
+        simulation_mode = default_mode
+    if not _single_argument_api(utility_api.SetSimulationQuality):
+        utility_api.SetSimulationQuality(quality, simulation_mode)
+    else:
+        if simulation_mode != default_mode:
+            raise ValueError("This CLO build cannot select simulation_mode independently of quality")
+        utility_api.SetSimulationQuality(quality)
     return {"quality": quality, "simulation_mode": simulation_mode}
 
 
@@ -846,7 +878,12 @@ def handle_copy_colorway(params):
     # copyOption: 0=unlink all properties 1=unlink materials only 2=link all
     index = params["colorway_index"]
     copy_option = params.get("copy_option", 0)
-    new_index = utility_api.CopyColorway(index, copy_option)
+    if not _single_argument_api(utility_api.CopyColorway):
+        new_index = utility_api.CopyColorway(index, copy_option)
+    else:
+        if copy_option != 0:
+            raise ValueError("This CLO build does not support custom copy_option values")
+        new_index = utility_api.CopyColorway(index)
     return {"copied": True, "source_index": index,
             "copy_option": copy_option, "new_index": new_index}
 

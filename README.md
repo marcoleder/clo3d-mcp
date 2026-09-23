@@ -53,6 +53,17 @@ That gives you `.venv/bin/clo3d-mcp` (`\.venv\Scripts\clo3d-mcp.exe` on Windows)
 
 ## 2. Register the bridge inside CLO3D
 
+An **opt-in native C++ backend** is available in [`cpp/`](cpp/README.md). It keeps
+the same 48 MCP tools and protocol 3, and returns to CLO's event loop between
+commands. Build it with the full CLO 2026.1.224 SDK and Qt 6.10.3, then register
+the binary through Plug-in Manager. The Python setup below remains the default
+during native qualification; only one backend may serve an IPC directory.
+
+Both backends also have a local **`export_diagnostics`** MCP tool (49 tools total).
+It exports a ZIP of bridge logs and available crash reports even when CLO is
+down. The terminal equivalent is `clo3d-mcp diagnostics`; it prints the saved
+path and never uploads anything. See [local diagnostics](docs/diagnostics.md).
+
 The plug-in has to run *inside* CLO. Registering it as a menu item is the least
 fiddly route — one click, no file dialogs.
 
@@ -144,9 +155,12 @@ claude mcp add clo3d -- /ABSOLUTE/PATH/TO/clo3d-mcp/.venv/bin/clo3d-mcp
 }
 ```
 
-The IPC directory must match on both sides. Both now default to `~/clo3d_mcp`
-when `TEMP` is unset (macOS), or `%TEMP%/clo3d_mcp` on Windows. WSL clients
-auto-detect a Windows user temp directory; use an explicit path when ambiguous.
+The IPC directory must match on both sides. Both backends and the MCP server
+default to `~/clo3d_mcp` on macOS, ignoring `TMPDIR` and `TEMP` so Dock launches
+and MCP stdio environment filtering agree. Windows uses `%TEMP%/clo3d_mcp`;
+`TMPDIR` cannot override it. WSL clients auto-detect a Windows user temp
+directory, ignoring Linux temp settings; use an explicit path
+when ambiguous.
 For a custom directory, set `CLO3D_MCP_DIR` in both the MCP client's server
 environment and CLO's environment; setting it in the client does not configure CLO.
 
@@ -194,7 +208,7 @@ stop-file command above is also available when the MCP client has exited.
 
 ---
 
-## The 48 tools
+## The 48 CLO tools and local diagnostics
 
 <details>
 <summary>Full list</summary>
@@ -216,12 +230,22 @@ stop-file command above is also available when the MCP client has exited.
 
 **Simulation** — `simulate` `set_simulation_quality`
 
+Omitting `simulation_mode` selects GPU for `quality=3` and CPU for the other
+presets. Explicit `0` (CPU) or `1` (GPU) overrides that default.
+The Python fallback recognizes discoverable older one-argument
+`SetSimulationQuality` and `CopyColorway` bindings before dispatch, with default
+options only. Unsupported custom options fail explicitly; an SDK exception
+never triggers a second call. Bindings without usable signature metadata use
+the current two-argument form. The native plugin requires the matching 2026.1 SDK.
+
 **Export** — `export_obj` `export_fbx`\* `export_glb`\* `export_gltf`\*
 `export_thumbnail` `export_snapshot` `export_turntable` `export_tech_pack`\*
 
 **Import** — `import_file`
 
 **Session** — `ping` `refresh_view` `set_live_preview` `stop_bridge`
+
+**Local support** — `export_diagnostics` (works without a running CLO bridge)
 
 \* AVT import needs native shim ABI 2. FBX/tech pack and export options need the
 [native shim](#optional-native-shim) on the tested CLO build. GLB/glTF have dialog
@@ -233,7 +257,12 @@ fallbacks only when no options are supplied.
 
 ## Watching it work
 
-CLO's viewport does not repaint by itself while the bridge is serving. Turn on
+With the native backend, no-path live preview requests repaint without PNG
+capture. An explicit preview path selects snapshot compatibility mode. Native
+`refresh_view` reports a refresh request; `repainted: false` means completion
+has not been confirmed. See [native behavior](cpp/README.md#behavior-and-limits).
+
+CLO's viewport does not repaint by itself while the Python bridge is serving. Turn on
 live preview and it redraws after every change:
 
 > *"Turn on live preview, then cycle the fabric through five colours"*
@@ -312,6 +341,7 @@ sentinel between commands. Neither can release CLO while an API call is blocked.
 | Menu-item bridge | protocol 3; see transport validation report | untested |
 | Script Editor bridge | ❌ thread starves | unverified |
 | Native shim | ABI 2 build/load, exports and AVT tested | MSVC configured; build/load untested |
+| Native C++ bridge (opt-in) | 48/48 live tools; 52 successful calls; [qualification record](docs/cpp-plugin-rewrite-plan.md) | implementation present; unvalidated |
 | `dialog_watcher.py` | ✅ AppleScript | ❌ macOS only |
 
 Windows reports welcome.

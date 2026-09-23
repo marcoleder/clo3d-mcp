@@ -1,0 +1,16 @@
+{
+  "export_paths": [
+    {"input": "/tmp/袖.png", "output": ["/tmp/袖.png"]},
+    {"input": ["a", "b"], "output": ["a", "b"]},
+    {"input": [[], ["a", ["b"]], []], "output": ["a", "b"]},
+    {"input": [], "error": true},
+    {"input": [[], []], "error": true},
+    {"input": "", "error": true},
+    {"input": "  ", "error": true},
+    {"input": ["a", null], "error": true},
+    {"input": ["a", 1], "error": true},
+    {"input": ["a", false], "error": true},
+    {"input": {"path": "a"}, "error": true}
+  ],
+  "failure_flags": ["opened", "saved", "exported", "imported", "created", "copied", "deleted", "simulated", "added", "replaced", "assigned", "set"]
+}

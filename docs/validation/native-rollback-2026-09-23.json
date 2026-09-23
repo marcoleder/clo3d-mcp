@@ -1,0 +1,37 @@
+{
+  "python_ping": {
+    "pong": true,
+    "in_clo3d": true
+  },
+  "python_pattern_count": {
+    "count": 0
+  },
+  "python_stop": {
+    "stopped": true
+  },
+  "readiness_removed": true,
+  "native_ping": {
+    "backend": "cpp",
+    "build": "1",
+    "in_clo3d": true,
+    "main_thread": true,
+    "pong": true,
+    "preview": {
+      "enabled": false,
+      "mode": "native",
+      "refresh_requests": 0,
+      "snapshot_calls": 0
+    },
+    "preview_modes": [
+      "native",
+      "snapshot"
+    ],
+    "qt_build_version": "6.10.3",
+    "qt_version": "6.10.3",
+    "scene_review_required": false,
+    "sdk_version": "2026.1.224"
+  },
+  "native_stop": {
+    "stopped": true
+  }
+}

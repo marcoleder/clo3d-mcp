@@ -518,7 +518,8 @@ def import_avatar(file_path: str, apf_path: str = "") -> dict:
     Args:
         file_path: Absolute path to the avatar file (.avt or .avac).
         apf_path: Optional pose (.apf), supported only with .avac.
-            .avt requires native shim ABI 2 and adds the avatar without replacing the garment.
+            .avt uses native add mode (the Python fallback requires shim ABI 2)
+            and preserves the garment.
     """
     return _send("import_avatar", {"file_path": file_path, "apf_path": apf_path})
 
@@ -556,14 +557,17 @@ def delete_fabric(fabric_index: int) -> dict:
 
 
 @mcp.tool()
-def set_simulation_quality(quality: int, simulation_mode: int = 0) -> dict:
+def set_simulation_quality(quality: int, simulation_mode: int | None = None) -> dict:
     """Set the simulation quality preset.
 
     Args:
         quality: 0 = Normal (default), 1 = Animation (stable),
             2 = Fitting (accurate fabric), 3 = FAST (GPU).
-        simulation_mode: 0 = CPU, 1 = FAST (GPU).
+        simulation_mode: 0 = CPU, 1 = FAST (GPU). Omit to select GPU for
+            quality=3 and CPU for the other presets.
     """
+    if simulation_mode is None:
+        simulation_mode = 1 if quality == 3 else 0
     return _send(
         "set_simulation_quality",
         {"quality": quality, "simulation_mode": simulation_mode},
@@ -577,17 +581,20 @@ def set_simulation_quality(quality: int, simulation_mode: int = 0) -> dict:
 def ping() -> dict:
     """Check that the CLO3D bridge plugin is running and reachable.
 
-    Use this first when other tools time out — it confirms whether the plugin
-    script is actually running inside CLO3D.
+    Use this first when other tools time out. Native results include backend,
+    Qt/SDK versions, preview capabilities and scene-review state.
     """
     return _send("ping")
 
 
 @mcp.tool()
 def refresh_view() -> dict:
-    """Force the 3D viewport to redraw.
+    """Request a refresh of the 3D viewport.
 
-    Useful after a batch of changes so the garment on screen reflects them.
+    The native backend returns to CLO's event loop without writing an image.
+    refresh_requested=True and repainted=False mean paint completion is not
+    confirmed. Explicit snapshot preview mode and the Python fallback capture
+    an image to repaint. Use export_snapshot to inspect the viewport image.
     """
     return _send("refresh_view")
 
@@ -596,15 +603,14 @@ def refresh_view() -> dict:
 def set_live_preview(enabled: bool = True, path: str | None = None) -> dict:
     """Turn live preview on or off.
 
-    When on, CLO's 3D viewport is redrawn after every state-changing command,
-    so a batch can be watched as it happens rather than only at the end.
-
-    Costs roughly 0.3-0.5s and a ~1 MB PNG per command, so leave it off for
-    long unattended batches.
+    The native backend requests a viewport refresh after mutations and returns
+    to CLO's event loop. With no path, it writes no preview images and resets
+    previous snapshot mode. An explicit path selects snapshot capture mode.
+    The Python fallback always captures snapshots (roughly 0.3-0.5s per change).
 
     Args:
-        enabled: True to redraw after each change, False to stop.
-        path: Optional path for the snapshot PNG used to force the redraw.
+        enabled: Enable extra per-mutation refresh/capture; CLO still repaints normally when disabled.
+        path: Optional absolute snapshot PNG path; enables capture compatibility mode.
     """
     params: dict = {"enabled": enabled}
     if path:
@@ -614,9 +620,28 @@ def set_live_preview(enabled: bool = True, path: str | None = None) -> dict:
 
 @mcp.tool()
 def stop_bridge() -> dict:
-    """Release CLO's UI by stopping the shared bridge after current work.
+    """Stop the shared bridge after current work.
 
     Affects all connected clients. Restart the bridge in CLO before using more
     tools. Cannot interrupt an in-progress native call or a modal dialog.
     """
     return _send("stop_bridge")
+
+
+@mcp.tool()
+def export_diagnostics(output_dir: str | None = None, crash_directory: str | None = None,
+                       max_total_mb: int = 512) -> dict:
+    """Save a local ZIP of bridge logs, last-command metadata and available CLO crash reports.
+
+    Works while CLO is stopped or crashed; does not contact CLO or upload files.
+    Returns the ZIP path, findings and any omitted/unavailable evidence. The ZIP
+    contains report.txt and a checksummed manifest. Logs/dumps may contain private
+    paths or memory; review them before sharing manually.
+
+    Args:
+        output_dir: Absolute destination directory; defaults to the bridge's diagnostics/exports directory.
+        crash_directory: Optional additional dedicated directory of crash reports/dumps.
+        max_total_mb: Maximum included file bytes in MiB, 1–16384. Oversized files are listed as omitted, never truncated silently.
+    """
+    from clo3d_mcp.diagnostics import export_bundle
+    return export_bundle(output_dir, crash_directory, max_total_mb)

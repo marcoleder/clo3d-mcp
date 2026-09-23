@@ -1,0 +1,294 @@
+{
+  "date": "2026-09-23",
+  "backend": "cpp",
+  "clo": "2026.1.224",
+  "qt": "6.10.3",
+  "os": "macOS 15.8",
+  "architecture": "arm64",
+  "tools_exercised": 48,
+  "calls_passed": 52,
+  "calls_failed": 0,
+  "files_produced": 170,
+  "calls": [
+    {
+      "tool": "ping",
+      "passed": true,
+      "seconds": 0.0
+    },
+    {
+      "tool": "save_project",
+      "passed": true,
+      "seconds": 0.5471
+    },
+    {
+      "tool": "open_file",
+      "passed": true,
+      "seconds": 3.5014
+    },
+    {
+      "tool": "get_project_info",
+      "passed": true,
+      "seconds": 0.1638
+    },
+    {
+      "tool": "get_garment_info",
+      "passed": true,
+      "seconds": 0.1682
+    },
+    {
+      "tool": "refresh_view",
+      "passed": true,
+      "seconds": 0.1685
+    },
+    {
+      "tool": "set_live_preview",
+      "passed": true,
+      "seconds": 0.1684
+    },
+    {
+      "tool": "get_pattern_count",
+      "passed": true,
+      "seconds": 0.1674
+    },
+    {
+      "tool": "get_pattern_list",
+      "passed": true,
+      "seconds": 0.1682
+    },
+    {
+      "tool": "get_pattern_info",
+      "passed": true,
+      "seconds": 0.1654
+    },
+    {
+      "tool": "get_pattern_bounding_box",
+      "passed": true,
+      "seconds": 0.1683
+    },
+    {
+      "tool": "get_fabric_for_pattern",
+      "passed": true,
+      "seconds": 0.168
+    },
+    {
+      "tool": "get_arrangement_list",
+      "passed": true,
+      "seconds": 0.1649
+    },
+    {
+      "tool": "get_fabric_count",
+      "passed": true,
+      "seconds": 0.1684
+    },
+    {
+      "tool": "get_fabric_list",
+      "passed": true,
+      "seconds": 0.1136
+    },
+    {
+      "tool": "get_colorways",
+      "passed": true,
+      "seconds": 0.168
+    },
+    {
+      "tool": "get_avatars",
+      "passed": true,
+      "seconds": 0.1649
+    },
+    {
+      "tool": "get_avatar_genders",
+      "passed": true,
+      "seconds": 0.1134
+    },
+    {
+      "tool": "set_pattern_name",
+      "passed": true,
+      "seconds": 0.3367
+    },
+    {
+      "tool": "flip_pattern",
+      "passed": true,
+      "seconds": 0.2743
+    },
+    {
+      "tool": "set_fabric_color",
+      "passed": true,
+      "seconds": 0.1686
+    },
+    {
+      "tool": "assign_fabric_to_pattern",
+      "passed": true,
+      "seconds": 0.2127
+    },
+    {
+      "tool": "set_current_colorway",
+      "passed": true,
+      "seconds": 0.1678
+    },
+    {
+      "tool": "set_colorway_name",
+      "passed": true,
+      "seconds": 0.1682
+    },
+    {
+      "tool": "show_hide_avatar",
+      "passed": true,
+      "seconds": 0.1131
+    },
+    {
+      "tool": "set_simulation_quality",
+      "passed": true,
+      "seconds": 0.3308
+    },
+    {
+      "tool": "simulate",
+      "passed": true,
+      "seconds": 1.7295
+    },
+    {
+      "tool": "create_pattern",
+      "passed": true,
+      "seconds": 0.6121
+    },
+    {
+      "tool": "get_pattern_count",
+      "passed": true,
+      "seconds": 0.1657
+    },
+    {
+      "tool": "copy_pattern",
+      "passed": true,
+      "seconds": 0.7215
+    },
+    {
+      "tool": "import_fabric",
+      "passed": true,
+      "seconds": 0.9332
+    },
+    {
+      "tool": "add_fabric",
+      "passed": true,
+      "seconds": 0.5007
+    },
+    {
+      "tool": "replace_fabric",
+      "passed": true,
+      "seconds": 0.2196
+    },
+    {
+      "tool": "copy_colorway",
+      "passed": true,
+      "seconds": 0.7159
+    },
+    {
+      "tool": "import_avatar",
+      "passed": true,
+      "seconds": 2.4108
+    },
+    {
+      "tool": "export_obj",
+      "passed": true,
+      "seconds": 2.0794
+    },
+    {
+      "tool": "export_obj",
+      "passed": true,
+      "seconds": 0.4506
+    },
+    {
+      "tool": "export_fbx",
+      "passed": true,
+      "seconds": 1.2042
+    },
+    {
+      "tool": "export_glb",
+      "passed": true,
+      "seconds": 4.4351
+    },
+    {
+      "tool": "export_gltf",
+      "passed": true,
+      "seconds": 8.2873
+    },
+    {
+      "tool": "export_thumbnail",
+      "passed": true,
+      "seconds": 0.2745
+    },
+    {
+      "tool": "export_snapshot",
+      "passed": true,
+      "seconds": 0.3332
+    },
+    {
+      "tool": "export_turntable",
+      "passed": true,
+      "seconds": 0.4385
+    },
+    {
+      "tool": "export_tech_pack",
+      "passed": true,
+      "seconds": 7.6932
+    },
+    {
+      "tool": "delete_pattern",
+      "passed": true,
+      "seconds": 0.6109
+    },
+    {
+      "tool": "delete_fabric",
+      "passed": true,
+      "seconds": 0.7663
+    },
+    {
+      "tool": "delete_colorway",
+      "passed": true,
+      "seconds": 0.4996
+    },
+    {
+      "tool": "save_project",
+      "passed": true,
+      "seconds": 4.1726
+    },
+    {
+      "tool": "new_project",
+      "passed": true,
+      "seconds": 0.4909
+    },
+    {
+      "tool": "import_file",
+      "passed": true,
+      "seconds": 2.2425
+    },
+    {
+      "tool": "open_file",
+      "passed": true,
+      "seconds": 2.361
+    },
+    {
+      "tool": "stop_bridge",
+      "passed": true,
+      "seconds": 0.1684
+    }
+  ],
+  "obj_default": {
+    "vertices": 202544,
+    "faces": 358446
+  },
+  "obj_without_avatar": {
+    "vertices": 52182,
+    "faces": 100351
+  },
+  "artifact_headers_and_restoration_verified": true,
+  "binary_manifest": {
+    "backend": "cpp",
+    "protocol": 3,
+    "plugin_abi": 1,
+    "target_clo_sdk": "2026.1.224",
+    "qt": "6.10.3",
+    "configuration": "Release",
+    "compiler": "AppleClang 17.0.0.17000604",
+    "binary_sha256": "38d686815fae891b81450ef3c75b96221d226a6cc0c6a1c1d2fc8706595e3364",
+    "sdk_interface_header_sha256": "ec0d4e32011d9f8f157c7b90e97069211c1953d884559397e66339d0063224e6"
+  }
+}

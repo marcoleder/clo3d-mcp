@@ -1,0 +1,17 @@
+# Resolve the already loaded CLO/Qt images, never a second runtime from a build tree.
+execute_process(COMMAND otool -L "${PLUGIN}" OUTPUT_VARIABLE deps COMMAND_ERROR_IS_FATAL ANY)
+string(REGEX MATCHALL "[^\n]+" lines "${deps}")
+foreach(line IN LISTS lines)
+    string(STRIP "${line}" line)
+    string(REGEX REPLACE " .*" "" dependency "${line}")
+    if(dependency MATCHES "(Qt(Core|Gui|Widgets)\\.framework/Versions/A/Qt(Core|Gui|Widgets))$")
+        set(replacement "@executable_path/../Frameworks/${CMAKE_MATCH_1}")
+    elseif(dependency MATCHES "libCLOAPIInterface\\.dylib$")
+        set(replacement "@executable_path/../Frameworks/libCLOAPIInterface.dylib")
+    else()
+        continue()
+    endif()
+    execute_process(COMMAND install_name_tool -change "${dependency}" "${replacement}" "${PLUGIN}"
+        COMMAND_ERROR_IS_FATAL ANY)
+endforeach()
+execute_process(COMMAND codesign --force --sign - "${PLUGIN}" COMMAND_ERROR_IS_FATAL ANY)
